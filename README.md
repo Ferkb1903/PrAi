@@ -1,59 +1,51 @@
-# PrAI — Deep Learning para Reducción de Varianza en Monte Carlo de Protones
+# PrAI — Dataset Generation Pipeline (CT + OpenGATE)
 
-Este repositorio implementa un **MVP educativo** para aprender una corrección de dosis 3D:
+Repositorio mínimo para la **etapa actual: generación de dataset**.
 
-- Entrada: `(D_low, SPR, E0)`
-- Salida: `D_high` o residual `ΔD = D_high - D_low`
+Incluye únicamente:
+- ingesta de CT (DICOM/NRRD),
+- organización por caso,
+- preprocesamiento (2 mm isotrópico + convención BEV),
+- simulación de beamlets en OpenGATE,
+- generación de jobs de clúster.
 
-El objetivo es acercar la calidad de simulaciones Monte Carlo de alta estadística usando simulaciones de baja estadística + red neuronal 3D.
+## Estructura mínima
 
-## Filosofía del repositorio
+- `scripts/organize_ct_cases.py`: unifica CT por caso en `data/ct_cases_by_case`.
+- `scripts/build_sim_ready_manifest.py`: genera `manifest_sim_ready.csv` por caso.
+- `scripts/preprocess_ct_for_gate.py`: DICOM/MHD -> MHD preprocesado.
+- `scripts/gate_voxelized_ct_experiment.py`: simulación OpenGATE voxelizada.
+- `scripts/run_gate_voxelized_shared_env.sh`: wrapper de ejecución local/cluster.
+- `scripts/generate_cluster_jobs.py`: crea jobs SLURM/PBS desde manifest.
+- `scripts/ingest_tcia_nrrd_ct.py`: convierte NRRD -> MHD con manifest.
+- `scripts/download_tcia_hn_ct_subset.py`: descarga subset de CT H&N sin clonar repo completo.
+- `configs/hu_material_map_v1.json`: mapeo HU->material para GATE.
 
-- Estructura mínima y legible.
-- Cada archivo tiene una única responsabilidad.
-- Configuración simple en Python (sin frameworks de configuración).
-- PyTorch puro para entender el flujo completo.
+## Flujo recomendado
 
-## Estructura
-
-- `docs/`: guías y contrato de datos.
-- `src/config/`: constantes y parámetros por defecto.
-- `src/data/`: esquema, I/O NPZ, preprocesado, dataset.
-- `src/models/`: arquitectura 3D U-Net y factoría de modelos.
-- `src/losses/`: pérdidas (MSE + Bragg + gradiente).
-- `src/metrics/`: métricas MVP (gamma simplificado, DVH, error distal).
-- `src/train.py`: entrenamiento.
-- `src/eval.py`: evaluación.
-- `scripts/`: utilidades demo para preparar datos y ejecutar entrenamiento/eval.
-
-## Quickstart
-
-1. Crear entorno e instalar dependencias:
+1. Organizar casos:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+python scripts/organize_ct_cases.py
+python scripts/build_sim_ready_manifest.py
 ```
 
-2. Generar dataset demo sintético:
+2. Generar jobs para clúster (ejemplo SLURM):
 
 ```bash
-python scripts/prepare_demo_dataset.py
+python scripts/generate_cluster_jobs.py \
+	--manifest data/ct_cases_by_case/manifest_sim_ready.csv \
+	--jobs-root cluster_jobs/full \
+	--scheduler slurm
 ```
 
-3. Entrenar (smoke test):
+3. Enviar (manual):
 
 ```bash
-bash scripts/run_train_demo.sh
+bash cluster_jobs/full/submit_all.sh
 ```
 
-4. Evaluar:
+## Dependencias
 
-```bash
-bash scripts/run_eval_demo.sh
-```
-
-## Nota
-
-Este MVP prioriza claridad y trazabilidad. Las métricas y el gamma están implementados en versión simple para validación inicial y se pueden reemplazar por implementaciones clínicas completas en una siguiente fase.
+- Python + `SimpleITK` + `numpy`.
+- OpenGATE/Geant4 instalado en el entorno de ejecución.
