@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+checkpoints/
+outputs/
+data/
+CT_Lung/
+CT_colorectal/
+cluster_jobs/
+manifest-*/
+*.pdf
+*.tar
+*.tar.gz
+*.tar.zst
+*.sha256

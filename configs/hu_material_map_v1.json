@@ -1,0 +1,14 @@
+{
+  "name": "hu_material_map_v1",
+  "description": "Mapeo HU a materiales Geant4 para simulación protonterapia (versión inicial mejorada)",
+  "ranges": [
+    {"hu_min": -2000, "hu_max": -950, "material": "G4_AIR"},
+    {"hu_min": -949, "hu_max": -700, "material": "G4_LUNG_ICRP"},
+    {"hu_min": -699, "hu_max": -300, "material": "G4_LUNG_ICRP"},
+    {"hu_min": -299, "hu_max": -50, "material": "G4_ADIPOSE_TISSUE_ICRP"},
+    {"hu_min": -49, "hu_max": 100, "material": "G4_TISSUE_SOFT_ICRP"},
+    {"hu_min": 101, "hu_max": 300, "material": "G4_WATER"},
+    {"hu_min": 301, "hu_max": 800, "material": "G4_BONE_CORTICAL_ICRP"},
+    {"hu_min": 801, "hu_max": 2000, "material": "G4_BONE_COMPACT_ICRU"}
+  ]
+}
