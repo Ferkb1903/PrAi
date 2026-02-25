@@ -1,51 +1,40 @@
-# PrAI — Dataset Generation Pipeline (CT + OpenGATE)
+# PrAI — Dataset Generation (CT + OpenGATE)
 
-Repositorio mínimo para la **etapa actual: generación de dataset**.
+Repositorio mínimo para la etapa actual: **generación de dataset**.
 
-Incluye únicamente:
-- ingesta de CT (DICOM/NRRD),
-- organización por caso,
-- preprocesamiento (2 mm isotrópico + convención BEV),
-- simulación de beamlets en OpenGATE,
-- generación de jobs de clúster.
-
-## Estructura mínima
-
-- `scripts/organize_ct_cases.py`: unifica CT por caso en `data/ct_cases_by_case`.
-- `scripts/build_sim_ready_manifest.py`: genera `manifest_sim_ready.csv` por caso.
-- `scripts/preprocess_ct_for_gate.py`: DICOM/MHD -> MHD preprocesado.
-- `scripts/gate_voxelized_ct_experiment.py`: simulación OpenGATE voxelizada.
-- `scripts/run_gate_voxelized_shared_env.sh`: wrapper de ejecución local/cluster.
-- `scripts/generate_cluster_jobs.py`: crea jobs SLURM/PBS desde manifest.
-- `scripts/ingest_tcia_nrrd_ct.py`: convierte NRRD -> MHD con manifest.
-- `scripts/download_tcia_hn_ct_subset.py`: descarga subset de CT H&N sin clonar repo completo.
-- `configs/hu_material_map_v1.json`: mapeo HU->material para GATE.
-
-## Flujo recomendado
-
-1. Organizar casos:
+## Quickstart (6 comandos)
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 python scripts/organize_ct_cases.py
 python scripts/build_sim_ready_manifest.py
+python scripts/generate_cluster_jobs.py --manifest data/ct_cases_by_case/manifest_sim_ready.csv --jobs-root cluster_jobs/full --scheduler slurm
 ```
 
-2. Generar jobs para clúster (ejemplo SLURM):
-
-```bash
-python scripts/generate_cluster_jobs.py \
-	--manifest data/ct_cases_by_case/manifest_sim_ready.csv \
-	--jobs-root cluster_jobs/full \
-	--scheduler slurm
-```
-
-3. Enviar (manual):
+Luego envía manualmente en clúster:
 
 ```bash
 bash cluster_jobs/full/submit_all.sh
 ```
 
-## Dependencias
+## Qué hace
 
-- Python + `SimpleITK` + `numpy`.
-- OpenGATE/Geant4 instalado en el entorno de ejecución.
+- Unifica CT por caso en `data/ct_cases_by_case`.
+- Construye un manifest de entrada para simulación.
+- Genera jobs SLURM/PBS para low/high por energía.
+
+## Scripts clave
+
+- `scripts/organize_ct_cases.py`
+- `scripts/build_sim_ready_manifest.py`
+- `scripts/preprocess_ct_for_gate.py`
+- `scripts/gate_voxelized_ct_experiment.py`
+- `scripts/generate_cluster_jobs.py`
+- `scripts/run_gate_voxelized_shared_env.sh`
+
+## Requisitos
+
+- Python + `numpy` + `SimpleITK`
+- OpenGATE/Geant4 disponible en nodo de ejecución
