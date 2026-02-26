@@ -108,7 +108,7 @@ def main() -> None:
         )
 
         convert_cmd = (
-            f"./.venv/bin/python scripts/preprocess_ct_for_gate.py --input \"{input_path}\" "
+            f"\"$PYTHON_BIN\" scripts/preprocess_ct_for_gate.py --input \"{input_path}\" "
             f"--input-type {input_type} --output-mhd \"{pre_mhd}\" --spacing-mm {args.resample_mm}"
         )
         if args.flip_z:
@@ -117,6 +117,14 @@ def main() -> None:
         lines = [
             header,
             f"cd \"{project_root}\"",
+            'PYTHON_BIN="${PYTHON_BIN:-./.venv/bin/python}"',
+            'if [[ ! -x "$PYTHON_BIN" ]]; then',
+            '  PYTHON_BIN="$(command -v python3 || command -v python || true)"',
+            'fi',
+            'if [[ -z "$PYTHON_BIN" ]]; then',
+            '  echo "No se encontró Python ejecutable (ni ./.venv/bin/python ni python3/python en PATH)" >&2',
+            '  exit 127',
+            'fi',
             convert_cmd,
             f"mkdir -p outputs/cluster_runs/{case_id}/low outputs/cluster_runs/{case_id}/high",
         ]
@@ -125,12 +133,12 @@ def main() -> None:
             low_out = f"outputs/cluster_runs/{case_id}/low/E{e}"
             high_out = f"outputs/cluster_runs/{case_id}/high/E{e}"
             lines.append(
-                "bash scripts/run_gate_voxelized_shared_env.sh "
+                "PYTHON_BIN=\"$PYTHON_BIN\" bash scripts/run_gate_voxelized_shared_env.sh "
                 f"\"{pre_mhd}\" \"{low_out}\" {e} {args.low_events} {args.low_seed} "
                 f"{args.source_mode} {args.beamlet_nx} {args.beamlet_ny} {args.beamlet_pitch_mm} {args.source_z_cm} \"{args.hu_map_json}\""
             )
             lines.append(
-                "bash scripts/run_gate_voxelized_shared_env.sh "
+                "PYTHON_BIN=\"$PYTHON_BIN\" bash scripts/run_gate_voxelized_shared_env.sh "
                 f"\"{pre_mhd}\" \"{high_out}\" {e} {args.high_events} {args.high_seed} "
                 f"{args.source_mode} {args.beamlet_nx} {args.beamlet_ny} {args.beamlet_pitch_mm} {args.source_z_cm} \"{args.hu_map_json}\""
             )

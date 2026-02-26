@@ -13,21 +13,21 @@ BEAMLET_PITCH_MM="${9:-6.0}"
 SOURCE_Z_CM="${10:--30.0}"
 HU_MAP_JSON="${11:-configs/hu_material_map_v1.json}"
 
-PYTHON_BIN="${PYTHON_BIN:-/home/fer/fer/ProtonAI/.venv/bin/python}"
-GEANT4_SH="${GEANT4_SH:-/home/fer/geant4_install/geant4-install/bin/geant4.sh}"
+PYTHON_BIN="${PYTHON_BIN:-python}"
+GEANT4_SH="${GEANT4_SH:-}"
 
-if [[ ! -f "$GEANT4_SH" ]]; then
-  echo "No existe geant4.sh en: $GEANT4_SH" >&2
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+  echo "Python no disponible en PATH: $PYTHON_BIN" >&2
   exit 1
 fi
 
-if [[ ! -x "$PYTHON_BIN" ]]; then
-  echo "No existe python ejecutable en: $PYTHON_BIN" >&2
-  exit 1
+if [[ -n "$GEANT4_SH" ]]; then
+  if [[ ! -f "$GEANT4_SH" ]]; then
+    echo "No existe geant4.sh en: $GEANT4_SH" >&2
+    exit 1
+  fi
+  . "$GEANT4_SH"
 fi
-
-# Reutiliza datasets Geant4 ya instalados por tu instalación local.
-. "$GEANT4_SH"
 
 "$PYTHON_BIN" scripts/gate_voxelized_ct_experiment.py \
   --ct-mhd "$CT_MHD" \
