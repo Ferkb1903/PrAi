@@ -57,8 +57,29 @@ print_progress_line() {
   echo "Progress E${ENERGY_MEV} N${N_EVENTS}: [${bar_filled}${bar_empty}] ${pct}% elapsed=${elapsed}s est=${estimated}s"
 }
 
+print_event_progress_line() {
+  local elapsed="$1"
+  local done_events="$2"
+  local pct="$3"
+  local width=30
+  local filled=$((pct * width / 100))
+  local empty=$((width - filled))
+  local bar_filled bar_empty speed
+  bar_filled=$(printf '%*s' "$filled" '' | tr ' ' '#')
+  bar_empty=$(printf '%*s' "$empty" '' | tr ' ' '-')
+  if ((elapsed > 0)); then
+    speed=$((done_events / elapsed))
+  else
+    speed=0
+  fi
+  echo "Progress E${ENERGY_MEV} N${N_EVENTS}: [${bar_filled}${bar_empty}] ${pct}% events=${done_events}/${N_EVENTS} speed=${speed} ev/s elapsed=${elapsed}s"
+}
+
 EST_SEC="$(estimate_runtime_sec)"
-START_TS="$(date +%s)"
+START_TS=0
+TMP_LOG="$(mktemp -t prai_gate_run_XXXX.log)"
+WAIT_MSG_PRINTED=0
+STOP_DETECTED=0
 
 "$PYTHON_BIN" scripts/gate_voxelized_ct_experiment.py \
   --ct-mhd "$CT_MHD" \
@@ -74,23 +95,58 @@ START_TS="$(date +%s)"
   --hu-map-json "$HU_MAP_JSON" \
   --event-modulo "$EVENT_MODULO" \
   --run-verbose "$RUN_VERBOSE" \
-  --event-verbose "$EVENT_VERBOSE" &
+  --event-verbose "$EVENT_VERBOSE" > >(tee -a "$TMP_LOG") 2>&1 &
 SIM_PID=$!
 
 while kill -0 "$SIM_PID" 2>/dev/null; do
+  if ((START_TS == 0)); then
+    if grep -q "Simulation: START" "$TMP_LOG"; then
+      START_TS="$(date +%s)"
+      echo "Progress E${ENERGY_MEV} N${N_EVENTS}: Simulation START detected"
+    elif ((WAIT_MSG_PRINTED == 0)); then
+      echo "Progress E${ENERGY_MEV} N${N_EVENTS}: waiting for Simulation: START"
+      WAIT_MSG_PRINTED=1
+      sleep "$PROGRESS_UPDATE_SEC"
+      continue
+    else
+      sleep "$PROGRESS_UPDATE_SEC"
+      continue
+    fi
+  fi
+
   NOW_TS="$(date +%s)"
   ELAPSED=$((NOW_TS - START_TS))
-  PCT=$((ELAPSED * 100 / EST_SEC))
-  if ((PCT > 99)); then
-    PCT=99
+
+  if grep -q "Simulation: STOP" "$TMP_LOG"; then
+    STOP_DETECTED=1
+    break
   fi
-  print_progress_line "$ELAPSED" "$EST_SEC" "$PCT"
+
+  LAST_EVENT="$(grep -Eo '[Ee]vent[^0-9]*[0-9]+' "$TMP_LOG" | grep -Eo '[0-9]+' | tail -n 1 || true)"
+  if [[ -n "$LAST_EVENT" ]]; then
+    if ((LAST_EVENT > N_EVENTS)); then
+      LAST_EVENT="$N_EVENTS"
+    fi
+    PCT=$((LAST_EVENT * 100 / N_EVENTS))
+    if ((PCT > 99)); then
+      PCT=99
+    fi
+    print_event_progress_line "$ELAPSED" "$LAST_EVENT" "$PCT"
+  else
+    echo "Progress E${ENERGY_MEV} N${N_EVENTS}: heartbeat elapsed=${ELAPSED}s (no event counter detected yet)"
+  fi
+
   sleep "$PROGRESS_UPDATE_SEC"
 done
 
+set +e
 wait "$SIM_PID"
 RC=$?
+set -e
 END_TS="$(date +%s)"
+if ((START_TS == 0)); then
+  START_TS="$END_TS"
+fi
 TOTAL_ELAPSED=$((END_TS - START_TS))
 DoseOut="${OUTPUT_DIR}/dose_voxelized_ct_edep.mhd"
 
@@ -105,5 +161,7 @@ else
     echo "Progress E${ENERGY_MEV} N${N_EVENTS}: FAILED rc=${RC} elapsed=${TOTAL_ELAPSED}s est=${EST_SEC}s" >&2
   fi
 fi
+
+rm -f "$TMP_LOG"
 
 exit "$RC"
