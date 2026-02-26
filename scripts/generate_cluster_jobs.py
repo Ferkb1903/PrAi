@@ -39,6 +39,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate cluster jobs from manifest_sim_ready.csv")
     parser.add_argument("--manifest", type=Path, default=Path("data/ct_cases_by_case/manifest_sim_ready.csv"))
     parser.add_argument("--jobs-root", type=Path, default=Path("cluster_jobs"))
+    parser.add_argument(
+        "--project-root",
+        type=Path,
+        default=Path(__file__).resolve().parents[1],
+        help="Project root used as working directory inside generated jobs",
+    )
     parser.add_argument("--scheduler", choices=["slurm", "pbs"], default="slurm")
     parser.add_argument("--cases-limit", type=int, default=0, help="0 means all cases")
 
@@ -68,6 +74,7 @@ def main() -> None:
         raise FileNotFoundError(f"Manifest not found: {args.manifest}")
 
     energies = parse_energy_list(args.energies)
+    project_root = args.project_root.expanduser().resolve()
 
     jobs_root = args.jobs_root
     jobs_root.mkdir(parents=True, exist_ok=True)
@@ -109,7 +116,7 @@ def main() -> None:
 
         lines = [
             header,
-            "cd /home/fer/fer/ProtonAI/PrAI",
+            f"cd \"{project_root}\"",
             convert_cmd,
             f"mkdir -p outputs/cluster_runs/{case_id}/low outputs/cluster_runs/{case_id}/high",
         ]
