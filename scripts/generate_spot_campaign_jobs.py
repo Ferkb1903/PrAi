@@ -33,6 +33,7 @@ def job_header(scheduler: str, job_name: str, walltime: str, cpus: int, mem_gb: 
                 f"#SBATCH --time={walltime}",
                 f"#SBATCH --cpus-per-task={cpus}",
                 f"#SBATCH --mem={mem_gb}G",
+                "#SBATCH --export=ALL,TMPDIR=/tmp",
                 "#SBATCH --output=%x_%j.out",
                 "set -euo pipefail",
             ]
@@ -216,6 +217,7 @@ def main() -> None:
                     f"#SBATCH --time={args.walltime}",
                     f"#SBATCH --cpus-per-task={args.cpus}",
                     f"#SBATCH --mem={args.mem_gb}G",
+                    "#SBATCH --export=ALL,TMPDIR=/tmp",
                     f"#SBATCH --output={jobs_root}/logs/%x_%A_%a.out",
                     "set -euo pipefail",
                     f'cd "{project_root}"',
@@ -261,7 +263,8 @@ def main() -> None:
                     "set -euo pipefail",
                     f'N=$(( $(wc -l < "{pair_index_csv}") - 1 ))',
                     'if (( N <= 0 )); then echo "No pairs to submit"; exit 1; fi',
-                    f'sbatch --array=0-$((N-1))%{args.array_concurrency} "{run_pair_array}"',
+                    'TMPDIR_SUBMIT="${TMPDIR:-${SLURM_TMPDIR:-/tmp}}"',
+                    f'sbatch --export=ALL,TMPDIR="$TMPDIR_SUBMIT" --array=0-$((N-1))%{args.array_concurrency} "{run_pair_array}"',
                 ]
             )
             + "\n",

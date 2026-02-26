@@ -18,6 +18,7 @@ def job_header(scheduler: str, job_name: str, walltime: str, cpus: int, mem_gb: 
                 f"#SBATCH --time={walltime}",
                 f"#SBATCH --cpus-per-task={cpus}",
                 f"#SBATCH --mem={mem_gb}G",
+                "#SBATCH --export=ALL,TMPDIR=/tmp",
                 "#SBATCH --output=%x_%j.out",
                 "set -euo pipefail",
             ]
