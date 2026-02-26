@@ -97,6 +97,8 @@ def build_simulation(
     beamlet_ny: int,
     beamlet_pitch_mm: float,
     source_z_cm: float,
+    source_x_mm: float,
+    source_y_mm: float,
     hu_map_json: Path | None,
     event_modulo: int,
     run_verbose: int,
@@ -140,11 +142,14 @@ def build_simulation(
             name="proton_source_000",
             proton_energy_mev=proton_energy_mev,
             n_events=int(n_events),
-            x_mm=0.0,
-            y_mm=0.0,
+            x_mm=float(source_x_mm),
+            y_mm=float(source_y_mm),
             z_cm=float(source_z_cm),
         )
-        print(f"Modo fuente: point (n={int(n_events)})")
+        print(
+            "Modo fuente: point "
+            f"(x={float(source_x_mm):.2f} mm, y={float(source_y_mm):.2f} mm, n={int(n_events)})"
+        )
     elif source_mode == "beamlet":
         if beamlet_nx < 1 or beamlet_ny < 1:
             raise ValueError("beamlet-nx y beamlet-ny deben ser >= 1")
@@ -198,6 +203,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--beamlet-ny", type=int, default=5)
     parser.add_argument("--beamlet-pitch-mm", type=float, default=6.0)
     parser.add_argument("--source-z-cm", type=float, default=-30.0)
+    parser.add_argument("--source-x-mm", type=float, default=0.0)
+    parser.add_argument("--source-y-mm", type=float, default=0.0)
     parser.add_argument("--hu-map-json", type=Path, default=None, help="Archivo JSON con mapeo HU->material")
     parser.add_argument(
         "--event-modulo",
@@ -236,6 +243,8 @@ if __name__ == "__main__":
         beamlet_ny=args.beamlet_ny,
         beamlet_pitch_mm=args.beamlet_pitch_mm,
         source_z_cm=args.source_z_cm,
+        source_x_mm=args.source_x_mm,
+        source_y_mm=args.source_y_mm,
         hu_map_json=args.hu_map_json,
         event_modulo=args.event_modulo,
         run_verbose=args.run_verbose,

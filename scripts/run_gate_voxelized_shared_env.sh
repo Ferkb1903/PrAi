@@ -19,6 +19,8 @@ PROGRESS_UPDATE_SEC="${PROGRESS_UPDATE_SEC:-20}"
 EVENT_MODULO="${EVENT_MODULO:-100000}"
 RUN_VERBOSE="${RUN_VERBOSE:-1}"
 EVENT_VERBOSE="${EVENT_VERBOSE:-1}"
+SOURCE_X_MM="${SOURCE_X_MM:-0.0}"
+SOURCE_Y_MM="${SOURCE_Y_MM:-0.0}"
 
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
   echo "Python no disponible en PATH: $PYTHON_BIN" >&2
@@ -92,6 +94,8 @@ STOP_DETECTED=0
   --beamlet-ny "$BEAMLET_NY" \
   --beamlet-pitch-mm "$BEAMLET_PITCH_MM" \
   --source-z-cm "$SOURCE_Z_CM" \
+  --source-x-mm "$SOURCE_X_MM" \
+  --source-y-mm "$SOURCE_Y_MM" \
   --hu-map-json "$HU_MAP_JSON" \
   --event-modulo "$EVENT_MODULO" \
   --run-verbose "$RUN_VERBOSE" \
