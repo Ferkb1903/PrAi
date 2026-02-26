@@ -77,6 +77,7 @@ def main() -> None:
     parser.add_argument("--walltime", type=str, default="08:00:00")
     parser.add_argument("--cpus", type=int, default=1)
     parser.add_argument("--mem-gb", type=int, default=8)
+    parser.add_argument("--array-concurrency", type=int, default=50)
     args = parser.parse_args()
 
     if not args.manifest.exists():
@@ -159,10 +160,13 @@ def main() -> None:
                 pair_index_rows.append(
                     {
                         "case_id": case_id,
+                        "input_type": input_type,
+                        "input_path": input_path,
                         "energy_mev": str(energy),
                         "spot_idx": str(spot_idx),
                         "spot_x_mm": f"{sx:.3f}",
                         "spot_y_mm": f"{sy:.3f}",
+                        "pre_mhd": str(pre_mhd),
                         "low_out": low_out,
                         "high_out": high_out,
                     }
@@ -186,10 +190,84 @@ def main() -> None:
         with pair_index_csv.open("w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(
                 f,
-                fieldnames=["case_id", "energy_mev", "spot_idx", "spot_x_mm", "spot_y_mm", "low_out", "high_out"],
+                fieldnames=[
+                    "case_id",
+                    "input_type",
+                    "input_path",
+                    "energy_mev",
+                    "spot_idx",
+                    "spot_x_mm",
+                    "spot_y_mm",
+                    "pre_mhd",
+                    "low_out",
+                    "high_out",
+                ],
             )
             w.writeheader()
             w.writerows(pair_index_rows)
+
+    if args.scheduler == "slurm" and pair_index_rows:
+        run_pair_array = jobs_root / "run_pair_array.sh"
+        run_pair_array.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    f"#SBATCH --job-name=prai_pair",
+                    f"#SBATCH --time={args.walltime}",
+                    f"#SBATCH --cpus-per-task={args.cpus}",
+                    f"#SBATCH --mem={args.mem_gb}G",
+                    f"#SBATCH --output={jobs_root}/logs/%x_%A_%a.out",
+                    "set -euo pipefail",
+                    f'cd "{project_root}"',
+                    'TMPDIR="${TMPDIR:-$PWD/.tmp_slurm}"',
+                    'mkdir -p "$TMPDIR"',
+                    'export TMPDIR',
+                    'PYTHON_BIN="${PYTHON_BIN:-./.venv/bin/python}"',
+                    'if [[ ! -x "$PYTHON_BIN" ]]; then',
+                    '  PYTHON_BIN="$(command -v python3 || command -v python || true)"',
+                    'fi',
+                    'if [[ -z "$PYTHON_BIN" ]]; then',
+                    '  echo "No se encontró Python ejecutable" >&2',
+                    '  exit 127',
+                    'fi',
+                    f'mkdir -p "{jobs_root}/logs"',
+                    f'PAIR_CSV="{pair_index_csv}"',
+                    'ROW_NUM=$((SLURM_ARRAY_TASK_ID + 2))',
+                    'ROW=$(sed -n "${ROW_NUM}p" "$PAIR_CSV")',
+                    'if [[ -z "$ROW" ]]; then',
+                    '  echo "No row for SLURM_ARRAY_TASK_ID=$SLURM_ARRAY_TASK_ID" >&2',
+                    '  exit 2',
+                    'fi',
+                    'IFS="," read -r case_id input_type input_path energy_mev spot_idx spot_x_mm spot_y_mm pre_mhd low_out high_out <<< "$ROW"',
+                    'if [[ ! -f "$pre_mhd" ]]; then',
+                    '  mkdir -p "$(dirname "$pre_mhd")"',
+                    '  "$PYTHON_BIN" scripts/preprocess_ct_for_gate.py --input "$input_path" --input-type "$input_type" --output-mhd "$pre_mhd" --spacing-mm 2.0',
+                    'fi',
+                    'mkdir -p "$low_out" "$high_out"',
+                    f'SOURCE_X_MM="$spot_x_mm" SOURCE_Y_MM="$spot_y_mm" PYTHON_BIN="$PYTHON_BIN" bash scripts/run_gate_voxelized_shared_env.sh "$pre_mhd" "$low_out" "$energy_mev" {args.low_events} {args.low_seed} point 1 1 1.0 {args.source_z_cm} "{args.hu_map_json}"',
+                    f'SOURCE_X_MM="$spot_x_mm" SOURCE_Y_MM="$spot_y_mm" PYTHON_BIN="$PYTHON_BIN" bash scripts/run_gate_voxelized_shared_env.sh "$pre_mhd" "$high_out" "$energy_mev" {args.high_events} {args.high_seed} point 1 1 1.0 {args.source_z_cm} "{args.hu_map_json}"',
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        run_pair_array.chmod(0o755)
+
+        submit_array = jobs_root / "submit_array_50.sh"
+        submit_array.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    "set -euo pipefail",
+                    f'N=$(( $(wc -l < "{pair_index_csv}") - 1 ))',
+                    'if (( N <= 0 )); then echo "No pairs to submit"; exit 1; fi',
+                    f'sbatch --array=0-$((N-1))%{args.array_concurrency} "{run_pair_array}"',
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        submit_array.chmod(0o755)
 
     total_pairs = len(pair_index_rows)
     print(f"Selected cases: {len(selected)}")
@@ -199,6 +277,9 @@ def main() -> None:
     print(f"Jobs root: {jobs_root}")
     print(f"Submit script: {submit_script}")
     print(f"Pair index: {pair_index_csv}")
+    if args.scheduler == "slurm" and pair_index_rows:
+        print(f"Array runner: {jobs_root / 'run_pair_array.sh'}")
+        print(f"Array submit: {jobs_root / 'submit_array_50.sh'}")
 
 
 if __name__ == "__main__":
