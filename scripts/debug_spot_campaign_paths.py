@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 from pathlib import Path
 from typing import Iterable
 
@@ -31,6 +32,79 @@ def has_dose_files(folder: Path) -> bool:
     return False
 
 
+def file_listing(folder: Path) -> list[str]:
+    if not folder.exists() or not folder.is_dir():
+        return []
+    output: list[str] = []
+    for item in sorted(folder.iterdir()):
+        if item.is_file():
+            output.append(f"{item.name} size={item.stat().st_size}")
+        elif item.is_dir():
+            output.append(f"{item.name}/")
+    return output
+
+
+def audit_single_case(spot_root: Path, case_id: str) -> None:
+    case_dir = spot_root / case_id
+    print("\n=== SINGLE CASE AUDIT ===")
+    print(f"case_dir={escaped(case_dir)} exists={case_dir.exists()}")
+    if not case_dir.exists():
+        return
+
+    energy_dirs = sorted([p for p in case_dir.iterdir() if p.is_dir()])
+    print(f"energies_found={len(energy_dirs)}")
+
+    total_spots = 0
+    total_low_ok = 0
+    total_high_ok = 0
+    total_high_missing_dir = 0
+
+    for energy_dir in energy_dirs:
+        spot_dirs = sorted([p for p in energy_dir.iterdir() if p.is_dir() and p.name.startswith("spot_")])
+        print(f"\nenergy={energy_dir.name} spot_count={len(spot_dirs)}")
+
+        for spot_dir in spot_dirs:
+            total_spots += 1
+            low_dir = spot_dir / "low"
+            high_dir = spot_dir / "high"
+
+            low_exists = low_dir.exists()
+            high_exists = high_dir.exists()
+            low_ok = has_dose_files(low_dir)
+            high_ok = has_dose_files(high_dir)
+
+            total_low_ok += int(low_ok)
+            total_high_ok += int(high_ok)
+            if not high_exists:
+                total_high_missing_dir += 1
+
+            print(
+                f"spot={spot_dir.name} "
+                f"low_exists={int(low_exists)} low_dose_ok={int(low_ok)} "
+                f"high_exists={int(high_exists)} high_dose_ok={int(high_ok)}"
+            )
+            print(f"  checked_low_path={escaped(low_dir)}")
+            if low_exists:
+                low_files = file_listing(low_dir)
+                print(f"  low_files_count={len(low_files)}")
+                for row in low_files:
+                    print(f"    - {row}")
+
+            print(f"  checked_high_path={escaped(high_dir)}")
+            if high_exists:
+                high_files = file_listing(high_dir)
+                print(f"  high_files_count={len(high_files)}")
+                for row in high_files:
+                    print(f"    - {row}")
+
+    print("\n=== SINGLE CASE SUMMARY ===")
+    print(f"case_id={case_id}")
+    print(f"total_spots={total_spots}")
+    print(f"low_dose_ok={total_low_ok}")
+    print(f"high_dose_ok={total_high_ok}")
+    print(f"high_missing_dir={total_high_missing_dir}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Debug path resolution for spot campaign low/high outputs")
     parser.add_argument("--root", type=Path, required=True, help="Project root (the folder that contains outputs/spot_campaign)")
@@ -39,6 +113,7 @@ def main() -> None:
     parser.add_argument("--energy", type=str, default="", help="Optional energy token like E160")
     parser.add_argument("--spot", type=str, default="", help="Optional spot token like spot_003")
     parser.add_argument("--rows", type=int, default=30, help="Rows to sample from pair csv")
+    parser.add_argument("--single-case", type=str, default="", help="If set, prints full audit for this case_id")
     args = parser.parse_args()
 
     root = args.root.expanduser().resolve()
@@ -115,6 +190,9 @@ def main() -> None:
                     f"  high_missing_debug: parent_exists={int(parent_exists)} "
                     f"high_dir_exists={int(high_dir.exists())} high_out_raw={row.get('high_out', '')!r}"
                 )
+
+    if args.single_case:
+        audit_single_case(spot_root, args.single_case)
 
 
 if __name__ == "__main__":
