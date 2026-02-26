@@ -100,6 +100,7 @@ def build_simulation(
     hu_map_json: Path | None,
     event_modulo: int,
     run_verbose: int,
+    event_verbose: int,
 ) -> gate.Simulation:
     sim = gate.Simulation()
 
@@ -111,6 +112,8 @@ def build_simulation(
     sim.random_seed = int(seed)
     if int(run_verbose) >= 0:
         sim.g4_commands_after_init.append(f"/run/verbose {int(run_verbose)}")
+    if int(event_verbose) >= 0:
+        sim.g4_commands_after_init.append(f"/event/verbose {int(event_verbose)}")
     if int(event_modulo) > 0:
         sim.g4_commands_after_init.append(f"/run/eventModulo {int(event_modulo)} 1")
 
@@ -208,6 +211,12 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="Nivel de verbosidad Geant4 para progreso de corrida (/run/verbose)",
     )
+    parser.add_argument(
+        "--event-verbose",
+        type=int,
+        default=1,
+        help="Nivel de verbosidad Geant4 para eventos (/event/verbose)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Solo construye la simulación, no la ejecuta")
     return parser.parse_args()
 
@@ -230,6 +239,7 @@ if __name__ == "__main__":
         hu_map_json=args.hu_map_json,
         event_modulo=args.event_modulo,
         run_verbose=args.run_verbose,
+        event_verbose=args.event_verbose,
     )
 
     if args.dry_run:
