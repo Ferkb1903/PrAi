@@ -98,6 +98,7 @@ def build_simulation(
     beamlet_pitch_mm: float,
     source_z_cm: float,
     hu_map_json: Path | None,
+    event_modulo: int,
 ) -> gate.Simulation:
     sim = gate.Simulation()
 
@@ -107,6 +108,8 @@ def build_simulation(
     sim.output_dir = str(output_dir)
     sim.visu = False
     sim.random_seed = int(seed)
+    if int(event_modulo) > 0:
+        sim.g4_commands_after_init.append(f"/run/eventModulo {int(event_modulo)} 1")
 
     world = sim.world
     world.size = [2.0 * m, 2.0 * m, 2.0 * m]
@@ -190,6 +193,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--beamlet-pitch-mm", type=float, default=6.0)
     parser.add_argument("--source-z-cm", type=float, default=-30.0)
     parser.add_argument("--hu-map-json", type=Path, default=None, help="Archivo JSON con mapeo HU->material")
+    parser.add_argument(
+        "--event-modulo",
+        type=int,
+        default=100000,
+        help="Imprime progreso Geant4 cada N eventos (0 desactiva)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Solo construye la simulación, no la ejecuta")
     return parser.parse_args()
 
@@ -210,6 +219,7 @@ if __name__ == "__main__":
         beamlet_pitch_mm=args.beamlet_pitch_mm,
         source_z_cm=args.source_z_cm,
         hu_map_json=args.hu_map_json,
+        event_modulo=args.event_modulo,
     )
 
     if args.dry_run:

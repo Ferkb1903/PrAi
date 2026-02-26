@@ -16,6 +16,7 @@ HU_MAP_JSON="${11:-configs/hu_material_map_v1.json}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 GEANT4_SH="${GEANT4_SH:-}"
 PROGRESS_UPDATE_SEC="${PROGRESS_UPDATE_SEC:-20}"
+EVENT_MODULO="${EVENT_MODULO:-100000}"
 
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
   echo "Python no disponible en PATH: $PYTHON_BIN" >&2
@@ -68,7 +69,8 @@ START_TS="$(date +%s)"
   --beamlet-ny "$BEAMLET_NY" \
   --beamlet-pitch-mm "$BEAMLET_PITCH_MM" \
   --source-z-cm "$SOURCE_Z_CM" \
-  --hu-map-json "$HU_MAP_JSON" &
+  --hu-map-json "$HU_MAP_JSON" \
+  --event-modulo "$EVENT_MODULO" &
 SIM_PID=$!
 
 while kill -0 "$SIM_PID" 2>/dev/null; do
