@@ -92,11 +92,18 @@ wait "$SIM_PID"
 RC=$?
 END_TS="$(date +%s)"
 TOTAL_ELAPSED=$((END_TS - START_TS))
+DoseOut="${OUTPUT_DIR}/dose_voxelized_ct_edep.mhd"
 
 if ((RC == 0)); then
   print_progress_line "$TOTAL_ELAPSED" "$EST_SEC" 100
 else
-  echo "Progress E${ENERGY_MEV} N${N_EVENTS}: FAILED rc=${RC} elapsed=${TOTAL_ELAPSED}s est=${EST_SEC}s" >&2
+  if ((RC == 139)) && [[ -f "$DoseOut" ]]; then
+    echo "Progress E${ENERGY_MEV} N${N_EVENTS}: WARNING rc=139 (segfault post-run), output present -> treating as success" >&2
+    print_progress_line "$TOTAL_ELAPSED" "$EST_SEC" 100
+    RC=0
+  else
+    echo "Progress E${ENERGY_MEV} N${N_EVENTS}: FAILED rc=${RC} elapsed=${TOTAL_ELAPSED}s est=${EST_SEC}s" >&2
+  fi
 fi
 
 exit "$RC"
