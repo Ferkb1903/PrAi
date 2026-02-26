@@ -117,6 +117,9 @@ def main() -> None:
         lines = [
             header,
             f"cd \"{project_root}\"",
+            'TMPDIR="${TMPDIR:-$PWD/.tmp_slurm}"',
+            'mkdir -p "$TMPDIR"',
+            'export TMPDIR',
             'PYTHON_BIN="${PYTHON_BIN:-./.venv/bin/python}"',
             'if [[ ! -x "$PYTHON_BIN" ]]; then',
             '  PYTHON_BIN="$(command -v python3 || command -v python || true)"',
