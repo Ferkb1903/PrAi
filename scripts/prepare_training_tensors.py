@@ -215,8 +215,12 @@ def main() -> None:
     hu_points, spr_points = load_hu_spr_points(args.hu_spr_json)
 
     qc_rows: list[dict[str, str]] = []
-    candidates: list[tuple[PairRow, np.ndarray, np.ndarray, np.ndarray, tuple[float, float, float]]] = []
-    high_maxima: list[float] = []
+    manifest_rows: list[dict[str, str]] = []
+    
+    if args.dose_norm_const > 0:
+        dose_scale = float(args.dose_norm_const)
+    else:
+        dose_scale = 1.0
 
     for i, pair in enumerate(pair_rows, start=1):
         low_dir = _resolve_existing_dir(pair.low_out)
@@ -288,6 +292,7 @@ def main() -> None:
                 "high_unc_bragg": "",
                 "npz_path": "",
             })
+            del low, high, low_unc, high_unc, low_img
             continue
 
         qc = qc_pair(low, high, low_unc, high_unc, args.max_uncertainty)
@@ -303,6 +308,7 @@ def main() -> None:
                 "high_unc_bragg": f"{qc.high_unc_bragg:.6f}",
                 "npz_path": "",
             })
+            del low, high, low_unc, high_unc, low_img
             continue
 
         ct_img, hu = _read_image(pair.pre_mhd)
@@ -318,29 +324,12 @@ def main() -> None:
                 "high_unc_bragg": f"{qc.high_unc_bragg:.6f}",
                 "npz_path": "",
             })
+            del low, high, low_unc, high_unc, low_img, hu, ct_img
             continue
 
         spr = hu_to_spr(hu, hu_points, spr_points)
         spacing_mm = tuple(float(x) for x in low_img.GetSpacing()[::-1])
 
-        candidates.append((pair, low, high, spr, spacing_mm))
-        high_maxima.append(float(np.max(high)))
-
-        if i % 200 == 0:
-            print(f"QC escaneados {i}/{len(pair_rows)}")
-
-    if not candidates:
-        raise RuntimeError("Ningún par superó QC")
-
-    if args.dose_norm_const > 0:
-        dose_scale = float(args.dose_norm_const)
-    else:
-        dose_scale = float(np.percentile(np.asarray(high_maxima, dtype=np.float32), 99.0))
-        if dose_scale <= 0:
-            dose_scale = 1.0
-
-    manifest_rows: list[dict[str, str]] = []
-    for j, (pair, low, high, spr, spacing_mm) in enumerate(candidates, start=1):
         low_n, high_n = normalize_doses_global(low, high, dose_scale)
         spr_n = np.clip(spr, 0.0, args.spr_max) / max(args.spr_max, 1e-6)
         beam_mask = build_beam_mask(low_n, args.beam_mask_rel_thr)
@@ -377,9 +366,11 @@ def main() -> None:
             "energy_mev": f"{pair.energy_mev:.3f}",
             "spot_idx": pair.spot_idx,
         })
+        
+        del low, high, low_unc, high_unc, low_img, hu, ct_img, spr, spr_n, beam_mask, case
 
-        if j % 200 == 0:
-            print(f"NPZ guardados {j}/{len(candidates)}")
+        if i % 200 == 0:
+            print(f"Procesados {i}/{len(pair_rows)}, totales ok: {len(manifest_rows)}")
 
     splits = split_by_patient(
         case_ids=[r["case_id"] for r in manifest_rows],
