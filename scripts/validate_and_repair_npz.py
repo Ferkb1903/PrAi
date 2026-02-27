@@ -112,7 +112,7 @@ def main():
     
     # Find all NPZ files
     npz_files = sorted(npz_dir.glob("*.npz"))
-    print(f"Found {len(npz_files)} NPZ files in {npz_dir}")
+    print(f"Found {len(npz_files)} NPZ files in {npz_dir}\n")
     
     valid_count = 0
     corrupted_files = []
@@ -122,56 +122,68 @@ def main():
         
         if is_valid:
             valid_count += 1
-            if i % 100 == 0:
-                print(f"  [{i:5d}/{len(npz_files)}] ✓ {npz_file.name}")
         else:
-            corrupted_files.append((npz_file.name, msg))
-            print(f"  [{i:5d}/{len(npz_files)}] ✗ {npz_file.name} - {msg}")
+            corrupted_files.append((npz_file.name, msg, npz_file))
+        
+        if i % 100 == 0:
+            status = f"✓ {valid_count} valid" if is_valid else f"✗ {len(corrupted_files)} corrupted"
+            print(f"  [{i:5d}/{len(npz_files)}] {status}", flush=True)
     
-    print(f"\n=== SUMMARY ===")
+    print(f"\n{'='*60}")
+    print(f"VALIDATION COMPLETE")
+    print(f"{'='*60}")
     print(f"Total:     {len(npz_files)}")
     print(f"Valid:     {valid_count}")
     print(f"Corrupted: {len(corrupted_files)}")
     
     if corrupted_files:
-        print(f"\n=== CORRUPTED/MIGRATION FILES ({len(corrupted_files)}) ===")
+        print(f"\n{'='*60}")
+        print(f"PROCESSING CORRUPTED FILES ({len(corrupted_files)})")
+        print(f"{'='*60}")
         
         migration_files = []
         true_corrupted = []
         
-        for name, msg in corrupted_files:
+        for name, msg, path in corrupted_files:
             if "migration" in msg.lower():
-                migration_files.append((name, msg))
+                migration_files.append((name, msg, path))
             else:
-                true_corrupted.append((name, msg))
+                true_corrupted.append((name, msg, path))
         
         # Try to migrate old key format files
         if migration_files:
             print(f"\nMigrating {len(migration_files)} files with old key names...")
             migrated = 0
-            for name, _ in migration_files:
-                filepath = npz_dir / name
+            for name, _, filepath in migration_files:
                 if migrate_npz_keys(str(filepath)):
                     migrated += 1
-                    if migrated % 50 == 0:
-                        print(f"  Migrated: {migrated}/{len(migration_files)}")
-            print(f"  Successfully migrated: {migrated}/{len(migration_files)}")
+            print(f"  ✓ Successfully migrated: {migrated}/{len(migration_files)}")
         
         # Remove truly corrupted files
+        removed_files = []
         if true_corrupted:
             print(f"\nRemoving {len(true_corrupted)} truly corrupted files...")
-            for name, msg in true_corrupted:
-                filepath = npz_dir / name
+            for name, msg, filepath in true_corrupted:
                 try:
                     os.remove(filepath)
-                    print(f"  Removed: {name} ({msg})")
+                    removed_files.append(name)
+                    print(f"  ✗ Removed: {name}")
                 except Exception as e:
-                    print(f"  Failed to remove {name}: {e}")
+                    print(f"  ✗ Failed to remove {name}: {e}")
+        
+        if removed_files:
+            print(f"\n{'='*60}")
+            print(f"REGENERATION NEEDED ({len(removed_files)} files)")
+            print(f"{'='*60}")
+            print(f"\nRemoved files that need to be regenerated:")
+            for fname in removed_files[:10]:
+                print(f"  - {fname}")
+            if len(removed_files) > 10:
+                print(f"  ... and {len(removed_files) - 10} more")
+            print(f"\nTo regenerate all missing NPZ files, run:")
+            print(f"  bash scripts/run_prepare_and_train_mi210.sh")
     
-    
-    print(f"\nTo regenerate missing NPZ files, extract pair_index entries for:")
-    print(f"  Files with indices: {[int(name.split('_')[-1].replace('.npz', '')) for name, _ in corrupted_files[:5]]}")
-    print(f"\nThen run: bash scripts/run_prepare_and_train_mi210.sh")
+    print(f"\n{'='*60}")
 
 
 if __name__ == "__main__":
