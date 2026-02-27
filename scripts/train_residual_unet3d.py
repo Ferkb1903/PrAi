@@ -68,10 +68,13 @@ def run_epoch(
     is_train = optimizer is not None
     model.train(is_train)
     criterion = nn.L1Loss()
-    autocast_enabled = device.type == "cuda"
+    
+    # Disable mixed precision for now (may cause NaN with ROCm)
+    autocast_enabled = False
 
     loss_sum = 0.0
     n_batches = 0
+    nan_batches = 0
 
     with tqdm(loader, desc=desc, disable=False) as pbar:
         for batch in pbar:
@@ -86,20 +89,37 @@ def run_epoch(
                 delta = model(x)
                 pred = d_low + delta
                 loss = criterion(pred, target)
+            
+            # Detect NaN
+            if torch.isnan(loss):
+                nan_batches += 1
+                print(f"\n[WARNING] NaN detected in batch {n_batches + 1}")
+                print(f"  delta range: [{delta.min():.4f}, {delta.max():.4f}]")
+                print(f"  pred range:  [{pred.min():.4f}, {pred.max():.4f}]")
+                print(f"  target range: [{target.min():.4f}, {target.max():.4f}]")
+                if nan_batches > 5:
+                    raise RuntimeError(f"Too many NaN batches ({nan_batches}). Stopping.")
+                continue  # Skip this batch
 
             if is_train:
                 if scaler is not None:
                     scaler.scale(loss).backward()
+                    # Clip gradients to prevent explosion
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
                     scaler.step(optimizer)
                     scaler.update()
                 else:
                     loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
                     optimizer.step()
 
             loss_sum += float(loss.item())
             n_batches += 1
             pbar.set_postfix(loss=f"{loss_sum / max(1, n_batches):.6f}")
 
+    if nan_batches > 0:
+        print(f"\n[!] Warning: {nan_batches} batches had NaN loss")
+    
     return loss_sum / max(1, n_batches)
 
 
@@ -116,7 +136,7 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--num-workers", type=int, default=0, help="DataLoader workers (0 = main process only, safer)")
-    parser.add_argument("--lr", type=float, default=2e-4)
+    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate (reduced from 2e-4 for stability)")
     parser.add_argument("--weight-decay", type=float, default=1e-5)
     parser.add_argument("--base-channels", type=int, default=24)
     parser.add_argument("--seed", type=int, default=42)
@@ -168,8 +188,17 @@ def main() -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = ResidualUNet3D(in_channels=4, base_channels=args.base_channels, residual=True).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scaler = torch.amp.GradScaler(device="cuda") if device.type == "cuda" else None
+    
+    # Use Adam (not AdamW) to reduce numerical issues, with conservative betas
+    optimizer = torch.optim.Adam(
+        model.parameters(), 
+        lr=args.lr, 
+        betas=(0.9, 0.999),  # Default betas
+        eps=1e-8,
+        weight_decay=args.weight_decay
+    )
+    # Disable GradScaler (we're not using mixed precision)
+    scaler = None
 
     run_dir = args.out_dir / datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
