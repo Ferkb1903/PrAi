@@ -10,6 +10,19 @@ echo "=========================================="
 echo "Python: $PYTHON_BIN"
 "$PYTHON_BIN" --version
 
+# Setup ROCm/MIOpen environment if AMD GPU detected
+MIOPEN_TEMP_DIR="/tmp/miopen_cache_$(whoami)"
+if [ ! -d "$MIOPEN_TEMP_DIR" ]; then
+    mkdir -p "$MIOPEN_TEMP_DIR"
+    chmod 700 "$MIOPEN_TEMP_DIR"
+fi
+
+export MIOPEN_USER_DB_PATH="$MIOPEN_TEMP_DIR/miopen_db"
+export MIOPEN_CUSTOM_CACHE_DIR="$MIOPEN_TEMP_DIR"
+if [ -z "${TMPDIR:-}" ] || [ ! -d "${TMPDIR:-}" ]; then
+    export TMPDIR=/tmp
+fi
+
 # Detect GPU type
 GPU_TYPE="NONE"
 if command -v rocm-smi &> /dev/null; then
