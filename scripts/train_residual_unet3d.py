@@ -97,7 +97,7 @@ def run_epoch(
 
             loss_sum += float(loss.item())
             n_batches += 1
-            pbar.set_postfix({"loss": loss_sum / max(1, n_batches):.6f})
+            pbar.set_postfix(loss=f"{loss_sum / max(1, n_batches):.6f}")
 
     return loss_sum / max(1, n_batches)
 
