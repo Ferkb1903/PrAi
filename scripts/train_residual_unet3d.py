@@ -12,6 +12,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -61,6 +62,7 @@ def run_epoch(
     optimizer: torch.optim.Optimizer | None,
     device: torch.device,
     scaler: torch.amp.GradScaler | None,
+    desc: str = "",
 ) -> float:
     is_train = optimizer is not None
     model.train(is_train)
@@ -70,30 +72,32 @@ def run_epoch(
     loss_sum = 0.0
     n_batches = 0
 
-    for batch in loader:
-        x = batch["x"].to(device, non_blocking=True)
-        d_low = batch["d_low"].to(device, non_blocking=True)
-        target = batch["target"].to(device, non_blocking=True)
+    with tqdm(loader, desc=desc, disable=False) as pbar:
+        for batch in pbar:
+            x = batch["x"].to(device, non_blocking=True)
+            d_low = batch["d_low"].to(device, non_blocking=True)
+            target = batch["target"].to(device, non_blocking=True)
 
-        if is_train:
-            optimizer.zero_grad(set_to_none=True)
+            if is_train:
+                optimizer.zero_grad(set_to_none=True)
 
-        with torch.amp.autocast(device_type=device.type, enabled=autocast_enabled):
-            delta = model(x)
-            pred = d_low + delta
-            loss = criterion(pred, target)
+            with torch.amp.autocast(device_type=device.type, enabled=autocast_enabled):
+                delta = model(x)
+                pred = d_low + delta
+                loss = criterion(pred, target)
 
-        if is_train:
-            if scaler is not None:
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                loss.backward()
-                optimizer.step()
+            if is_train:
+                if scaler is not None:
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    loss.backward()
+                    optimizer.step()
 
-        loss_sum += float(loss.item())
-        n_batches += 1
+            loss_sum += float(loss.item())
+            n_batches += 1
+            pbar.set_postfix({"loss": loss_sum / max(1, n_batches):.6f})
 
     return loss_sum / max(1, n_batches)
 
@@ -173,7 +177,7 @@ def main() -> None:
     best_val = float("inf")
     with metrics_path.open("w", encoding="utf-8") as mf:
         for epoch in range(1, args.epochs + 1):
-            train_l1 = run_epoch(model, train_loader, optimizer, device, scaler)
+            train_l1 = run_epoch(model, train_loader, optimizer, device, scaler, desc=f"Epoch {epoch:03d}/Train")
             val_l1 = evaluate(model, val_loader, device)
 
             row = {"epoch": epoch, "train_l1": train_l1, "val_l1": val_l1}

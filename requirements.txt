@@ -2,3 +2,4 @@ numpy>=1.26
 SimpleITK>=2.3
 opengate>=10.0
 torch>=2.2
+tqdm>=4.60
