@@ -4,7 +4,7 @@ set -euo pipefail
 PROJECT_ROOT="${PROJECT_ROOT:-$PWD}"
 PYTHON_BIN="${PYTHON_BIN:-$PROJECT_ROOT/.venv/bin/python}"
 
-PAIR_INDEX_CSV="${PAIR_INDEX_CSV:-$PROJECT_ROOT/cluster_jobs/spot_campaign/pair_index.csv}"
+PAIR_INDEX_CSV="${PAIR_INDEX_CSV:-$PROJECT_ROOT/cluster_jobs/spot_campaign_3060/pair_index.csv}"
 OUT_NPZ_DIR="${OUT_NPZ_DIR:-$PROJECT_ROOT/data/training_npz/spot_campaign_v2}"
 QC_REPORT="${QC_REPORT:-$PROJECT_ROOT/data/training_npz/qc_spot_campaign.csv}"
 MANIFEST_ALL="${MANIFEST_ALL:-$PROJECT_ROOT/data/training_npz/manifest_all.csv}"

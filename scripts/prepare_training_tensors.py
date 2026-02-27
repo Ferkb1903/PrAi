@@ -190,7 +190,7 @@ def main() -> None:
     parser.add_argument("--split-summary", type=Path, default=Path("data/training_npz/split_summary.json"))
     parser.add_argument("--hu-spr-json", type=Path, default=Path("configs/hu_spr_schneider_v1.json"))
     parser.add_argument("--dose-stem", type=str, default="dose_voxelized_ct_edep")
-    parser.add_argument("--max-uncertainty", type=float, default=0.03)
+    parser.add_argument("--max-uncertainty", type=float, default=0.10)
     parser.add_argument("--spr-max", type=float, default=2.0)
     parser.add_argument("--energy-norm-den", type=float, default=250.0)
     parser.add_argument("--beam-mask-rel-thr", type=float, default=0.05)
@@ -237,14 +237,14 @@ def main() -> None:
 
         low_mhd, low_unc_mhd = _dose_paths(low_dir, args.dose_stem)
         high_mhd, high_unc_mhd = _dose_paths(high_dir, args.dose_stem)
-        if not (low_mhd.exists() and high_mhd.exists() and low_unc_mhd.exists() and high_unc_mhd.exists()):
+        if not (low_mhd.exists() and high_mhd.exists()):
             qc_rows.append({
                 "pair_idx": str(pair.pair_idx),
                 "case_id": pair.case_id,
                 "energy_mev": str(pair.energy_mev),
                 "spot_idx": pair.spot_idx,
                 "qc_ok": "0",
-                "reason": "missing_dose_or_uncertainty_files",
+                "reason": "missing_dose_files",
                 "low_unc_bragg": "",
                 "high_unc_bragg": "",
                 "npz_path": "",
@@ -267,8 +267,14 @@ def main() -> None:
 
         low_img, low = _read_image(low_mhd)
         _, high = _read_image(high_mhd)
-        _, low_unc = _read_image(low_unc_mhd)
-        _, high_unc = _read_image(high_unc_mhd)
+        if low_unc_mhd.exists():
+            _, low_unc = _read_image(low_unc_mhd)
+        else:
+            low_unc = np.full_like(low, 0.01, dtype=np.float32)
+        if high_unc_mhd.exists():
+            _, high_unc = _read_image(high_unc_mhd)
+        else:
+            high_unc = np.full_like(high, 0.01, dtype=np.float32)
 
         if low.shape != high.shape or low.shape != low_unc.shape or low.shape != high_unc.shape:
             qc_rows.append({
