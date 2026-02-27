@@ -34,6 +34,58 @@ bash cluster_jobs/full/submit_all.sh
 - `scripts/generate_cluster_jobs.py`
 - `scripts/run_gate_voxelized_shared_env.sh`
 
+## Entrenamiento (baseline MVP)
+
+1) Convertir pares `low/high` de `spot_campaign` a NPZ:
+
+```bash
+python scripts/build_spot_campaign_npz.py \
+	--spot-root outputs/spot_campaign \
+	--out-dir data/training_npz/spot_campaign
+```
+
+2) Entrenar modelo baseline 3D (predicción residual):
+
+```bash
+python scripts/train_npz_baseline.py \
+	--npz-dir data/training_npz/spot_campaign \
+	--epochs 30 \
+	--batch-size 2 \
+	--num-workers 4
+```
+
+Checkpoints y métricas quedan en `checkpoints/train_npz_baseline/<timestamp>/`.
+
+## Pipeline recomendado antes de entrenar en MI210
+
+1) Preparar tensores optimizados con QC + HU→SPR + split por paciente:
+
+```bash
+python scripts/prepare_training_tensors.py \
+	--pair-index-csv cluster_jobs/spot_campaign/pair_index.csv \
+	--out-dir data/training_npz/spot_campaign_v2 \
+	--qc-report data/training_npz/qc_spot_campaign.csv \
+	--manifest-all data/training_npz/manifest_all.csv \
+	--manifest-train data/training_npz/manifest_train.csv \
+	--manifest-val data/training_npz/manifest_val.csv \
+	--manifest-test data/training_npz/manifest_test.csv
+```
+
+2) Entrenar Residual 3D U-Net:
+
+```bash
+python scripts/train_residual_unet3d.py \
+	--manifest-train data/training_npz/manifest_train.csv \
+	--manifest-val data/training_npz/manifest_val.csv \
+	--manifest-test data/training_npz/manifest_test.csv \
+	--epochs 80 \
+	--batch-size 2 \
+	--num-workers 8 \
+	--base-channels 24
+```
+
+La red usa aprendizaje residual: `D_pred = D_low + Net(D_low, SPR, E0, BeamMask)`.
+
 ## Requisitos
 
 - Python + `numpy` + `SimpleITK`

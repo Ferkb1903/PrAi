@@ -1,0 +1,17 @@
+{
+  "name": "hu_spr_schneider_v1",
+  "description": "Tabla HU->SPR (anclas) para conversión piecewise-linear en preparación de entrenamiento",
+  "points": [
+    {"hu": -1000, "spr": 0.001},
+    {"hu": -950, "spr": 0.18},
+    {"hu": -700, "spr": 0.27},
+    {"hu": -300, "spr": 0.74},
+    {"hu": -100, "spr": 0.92},
+    {"hu": 0, "spr": 1.00},
+    {"hu": 100, "spr": 1.04},
+    {"hu": 300, "spr": 1.16},
+    {"hu": 800, "spr": 1.45},
+    {"hu": 1200, "spr": 1.67},
+    {"hu": 2000, "spr": 1.95}
+  ]
+}
