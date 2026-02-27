@@ -33,11 +33,20 @@ def validate_npz_file(filepath: str) -> tuple[bool, str]:
             keys = list(npz.keys())
             if not keys:
                 return False, "No arrays in NPZ"
-            # Check that required keys exist
-            required = {'d_low', 'd_high', 'spr'}
+            
+            # Check for CORRECT keys
+            required_new = {'d_low', 'd_high', 'spr'}
+            # Also check for OLD key names (migration case)
+            required_old = {'low_dose', 'high_dose', 'spr'}
             loaded_keys = set(keys)
-            if not required.issubset(loaded_keys):
-                return False, f"Missing keys: {required - loaded_keys}"
+            
+            if required_new.issubset(loaded_keys):
+                return True, "OK"
+            elif required_old.issubset(loaded_keys):
+                return False, "Old key names (needs migration)"
+            else:
+                missing = required_new - loaded_keys
+                return False, f"Missing keys: {missing}"
         
         return True, "OK"
     
@@ -45,6 +54,50 @@ def validate_npz_file(filepath: str) -> tuple[bool, str]:
         return False, f"BadZipFile: {str(e)}"
     except Exception as e:
         return False, f"{type(e).__name__}: {str(e)}"
+
+
+def migrate_npz_keys(filepath: str) -> bool:
+    """
+    Convert old NPZ key names to new format.
+    low_dose -> d_low
+    high_dose -> d_high
+    Overwrites the file with corrected keys.
+    """
+    try:
+        filepath = Path(filepath)
+        
+        # Load old format
+        with np.load(filepath, allow_pickle=True) as npz:
+            old_data = {key: npz[key] for key in npz.files}
+        
+        # Check if needs migration
+        if 'low_dose' not in old_data or 'high_dose' not in old_data:
+            return False  # Already correct or invalid
+        
+        # Create new format
+        new_data = {}
+        for key, value in old_data.items():
+            if key == 'low_dose':
+                new_data['d_low'] = value
+            elif key == 'high_dose':
+                new_data['d_high'] = value
+            else:
+                new_data[key] = value
+        
+        # Save with new keys
+        backup_path = filepath.with_suffix('.npz.bak')
+        if filepath.exists():
+            filepath.rename(backup_path)
+        
+        np.savez_compressed(filepath, **new_data)
+        if backup_path.exists():
+            backup_path.unlink()  # Remove backup after success
+        
+        return True
+    
+    except Exception as e:
+        print(f"  Error migrating {filepath}: {e}")
+        return False
 
 
 def main():
@@ -81,19 +134,40 @@ def main():
     print(f"Corrupted: {len(corrupted_files)}")
     
     if corrupted_files:
-        print(f"\n=== CORRUPTED FILES ({len(corrupted_files)}) ===")
-        for name, msg in corrupted_files:
-            print(f"  {name}: {msg}")
+        print(f"\n=== CORRUPTED/MIGRATION FILES ({len(corrupted_files)}) ===")
         
-        # Remove corrupted files
-        print(f"\nRemoving corrupted files...")
-        for name, _ in corrupted_files:
-            filepath = npz_dir / name
-            try:
-                os.remove(filepath)
-                print(f"  Removed: {name}")
-            except Exception as e:
-                print(f"  Failed to remove {name}: {e}")
+        migration_files = []
+        true_corrupted = []
+        
+        for name, msg in corrupted_files:
+            if "migration" in msg.lower():
+                migration_files.append((name, msg))
+            else:
+                true_corrupted.append((name, msg))
+        
+        # Try to migrate old key format files
+        if migration_files:
+            print(f"\nMigrating {len(migration_files)} files with old key names...")
+            migrated = 0
+            for name, _ in migration_files:
+                filepath = npz_dir / name
+                if migrate_npz_keys(str(filepath)):
+                    migrated += 1
+                    if migrated % 50 == 0:
+                        print(f"  Migrated: {migrated}/{len(migration_files)}")
+            print(f"  Successfully migrated: {migrated}/{len(migration_files)}")
+        
+        # Remove truly corrupted files
+        if true_corrupted:
+            print(f"\nRemoving {len(true_corrupted)} truly corrupted files...")
+            for name, msg in true_corrupted:
+                filepath = npz_dir / name
+                try:
+                    os.remove(filepath)
+                    print(f"  Removed: {name} ({msg})")
+                except Exception as e:
+                    print(f"  Failed to remove {name}: {e}")
+    
     
     print(f"\nTo regenerate missing NPZ files, extract pair_index entries for:")
     print(f"  Files with indices: {[int(name.split('_')[-1].replace('.npz', '')) for name, _ in corrupted_files[:5]]}")
