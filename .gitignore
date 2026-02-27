@@ -13,3 +13,4 @@ manifest-*/
 *.tar.gz
 *.tar.zst
 *.sha256
+!src/
