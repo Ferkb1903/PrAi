@@ -23,6 +23,49 @@ from src.data.preprocess import maybe_crop_bev
 from src.model.resunet3d import ResidualUNet3D
 
 
+def validate_manifest_files(manifest_path: Path) -> tuple[int, int]:
+    """
+    Validate all NPZ files referenced in a manifest.
+    Returns (total_files, valid_files)
+    Removes invalid entries from the manifest in-place.
+    """
+    rows = list(csv.DictReader(manifest_path.open(encoding="utf-8")))
+    valid_rows = []
+    invalid_count = 0
+    
+    print(f"Validating {len(rows)} files from {manifest_path.name}...", flush=True)
+    
+    for row in tqdm(rows, desc="Validating files", leave=False):
+        npz_path = Path(row.get("npz_path", ""))
+        if not npz_path.exists():
+            invalid_count += 1
+            continue
+        
+        try:
+            # Try to actually load the file
+            case = load_case_npz(npz_path)
+            # Check that all required fields exist
+            if case.d_low is not None and case.d_high is not None and case.spr is not None:
+                valid_rows.append(row)
+            else:
+                invalid_count += 1
+        except Exception as e:
+            invalid_count += 1
+    
+    # Rewrite manifest with only valid rows
+    if invalid_count > 0:
+        print(f"  Removing {invalid_count} corrupted/missing files from manifest", flush=True)
+        with manifest_path.open("w", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=rows[0].keys() if rows else [])
+            writer.writeheader()
+            writer.writerows(valid_rows)
+    
+    valid_count = len(valid_rows)
+    print(f"  ✓ Manifest cleaned: {valid_count}/{len(rows)} files valid", flush=True)
+    return len(rows), valid_count
+
+
+
 class ManifestNPZDataset(Dataset):
     def __init__(self, manifest_csv: Path, use_bev_crop: bool = True, crop_size: tuple[int, int, int] = (96, 96, 96)) -> None:
         rows = list(csv.DictReader(manifest_csv.open(encoding="utf-8")))
@@ -114,7 +157,7 @@ def main() -> None:
     parser.add_argument("--manifest-test", type=Path, default=None)
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--batch-size", type=int, default=2)
-    parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--num-workers", type=int, default=0, help="DataLoader workers (0 = main process only, safer)")
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-5)
     parser.add_argument("--base-channels", type=int, default=24)
@@ -134,6 +177,29 @@ def main() -> None:
     if len(crop_tokens) != 3:
         raise ValueError("--crop-size debe tener formato D,H,W")
     crop_size = (crop_tokens[0], crop_tokens[1], crop_tokens[2])
+
+    # Validate manifest files before training
+    print("=" * 60)
+    print("VALIDATING MANIFEST FILES")
+    print("=" * 60)
+    train_total, train_valid = validate_manifest_files(args.manifest_train)
+    val_total, val_valid = validate_manifest_files(args.manifest_val)
+    if args.manifest_test is not None and args.manifest_test.exists():
+        test_total, test_valid = validate_manifest_files(args.manifest_test)
+    else:
+        test_total, test_valid = 0, 0
+    
+    if train_valid == 0:
+        raise ValueError("No valid training files after validation!")
+    if val_valid == 0:
+        raise ValueError("No valid validation files after validation!")
+    
+    print(f"\nDataset Summary:")
+    print(f"  Train: {train_valid:4d} / {train_total:4d} valid")
+    print(f"  Val:   {val_valid:4d} / {val_total:4d} valid")
+    if test_valid > 0:
+        print(f"  Test:  {test_valid:4d} / {test_total:4d} valid")
+    print("=" * 60 + "\n")
 
     train_ds = ManifestNPZDataset(args.manifest_train, use_bev_crop=not args.no_bev_crop, crop_size=crop_size)
     val_ds = ManifestNPZDataset(args.manifest_val, use_bev_crop=not args.no_bev_crop, crop_size=crop_size)
