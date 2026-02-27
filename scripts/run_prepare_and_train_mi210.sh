@@ -38,8 +38,34 @@ if [ "$INSTALLED_TORCH" = "NOT_INSTALLED" ]; then
         echo "[Install] Installing torch with $GPU_TYPE support from $TORCH_INDEX..."
         "$PYTHON_BIN" -m pip install --upgrade torch torchvision torchaudio --index-url "$TORCH_INDEX" 2>&1 | tail -5
     fi
+    INSTALLED_TORCH=$("$PYTHON_BIN" -c "import torch; print(torch.__version__)" 2>/dev/null || echo "ERROR")
 else
     echo "[✓] torch $INSTALLED_TORCH already installed"
+fi
+
+# Check if torch version matches GPU type (critical check!)
+if [ "$GPU_TYPE" = "AMD_ROCM" ] && [[ "$INSTALLED_TORCH" == *"cu1"* ]]; then
+    echo ""
+    echo "[!] ERROR: torch compiled for CUDA (cu*) but GPU is AMD ROCm!"
+    echo "    Version: $INSTALLED_TORCH"
+    echo "    This will run on CPU - extremely slow!"
+    echo ""
+    echo "[Fix] Removing CUDA torch and installing ROCm version..."
+    "$PYTHON_BIN" -m pip uninstall -y torch torchvision torchaudio 2>&1 | tail -2
+    "$PYTHON_BIN" -m pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm5.7 2>&1 | tail -10
+    INSTALLED_TORCH=$("$PYTHON_BIN" -c "import torch; print(torch.__version__)" 2>/dev/null || echo "ERROR")
+    echo "[✓] torch reinstalled: $INSTALLED_TORCH"
+elif [ "$GPU_TYPE" = "NVIDIA_CUDA" ] && [[ "$INSTALLED_TORCH" == *"rocm"* ]]; then
+    echo ""
+    echo "[!] ERROR: torch compiled for ROCm but GPU is NVIDIA CUDA!"
+    echo "    Version: $INSTALLED_TORCH"
+    echo "    This will run on CPU - extremely slow!"
+    echo ""
+    echo "[Fix] Removing ROCm torch and installing CUDA version..."
+    "$PYTHON_BIN" -m pip uninstall -y torch torchvision torchaudio 2>&1 | tail -2
+    "$PYTHON_BIN" -m pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 2>&1 | tail -10
+    INSTALLED_TORCH=$("$PYTHON_BIN" -c "import torch; print(torch.__version__)" 2>/dev/null || echo "ERROR")
+    echo "[✓] torch reinstalled: $INSTALLED_TORCH"
 fi
 
 # Verify GPU detection in PyTorch
