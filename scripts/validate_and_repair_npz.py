@@ -34,7 +34,7 @@ def validate_npz_file(filepath: str) -> tuple[bool, str]:
             if not keys:
                 return False, "No arrays in NPZ"
             # Check that required keys exist
-            required = {'low_dose', 'high_dose', 'spr'}
+            required = {'d_low', 'd_high', 'spr'}
             loaded_keys = set(keys)
             if not required.issubset(loaded_keys):
                 return False, f"Missing keys: {required - loaded_keys}"
