@@ -13,14 +13,9 @@ if ! "$PYTHON_BIN" -c "import torch; print(f'torch {torch.__version__}')" 2>/dev
     "$PYTHON_BIN" -m pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 2>&1 | tail -20
 fi
 
-PAIR_INDEX_CSV="${PAIR_INDEX_CSV:-$PROJECT_ROOT/cluster_jobs/spot_campaign_3060/pair_index.csv}"
-OUT_NPZ_DIR="${OUT_NPZ_DIR:-$PROJECT_ROOT/data/training_npz/spot_campaign_v2}"
-QC_REPORT="${QC_REPORT:-$PROJECT_ROOT/data/training_npz/qc_spot_campaign.csv}"
-MANIFEST_ALL="${MANIFEST_ALL:-$PROJECT_ROOT/data/training_npz/manifest_all.csv}"
 MANIFEST_TRAIN="${MANIFEST_TRAIN:-$PROJECT_ROOT/data/training_npz/manifest_train.csv}"
 MANIFEST_VAL="${MANIFEST_VAL:-$PROJECT_ROOT/data/training_npz/manifest_val.csv}"
 MANIFEST_TEST="${MANIFEST_TEST:-$PROJECT_ROOT/data/training_npz/manifest_test.csv}"
-SPLIT_SUMMARY="${SPLIT_SUMMARY:-$PROJECT_ROOT/data/training_npz/split_summary.json}"
 
 EPOCHS="${EPOCHS:-80}"
 BATCH_SIZE="${BATCH_SIZE:-2}"
@@ -29,21 +24,10 @@ BASE_CHANNELS="${BASE_CHANNELS:-24}"
 
 cd "$PROJECT_ROOT"
 
-echo "[1/2] Preparando tensores optimizados..."
-"$PYTHON_BIN" scripts/prepare_training_tensors.py \
-  --pair-index-csv "$PAIR_INDEX_CSV" \
-  --out-dir "$OUT_NPZ_DIR" \
-  --qc-report "$QC_REPORT" \
-  --manifest-all "$MANIFEST_ALL" \
-  --manifest-train "$MANIFEST_TRAIN" \
-  --manifest-val "$MANIFEST_VAL" \
-  --manifest-test "$MANIFEST_TEST" \
-  --split-summary "$SPLIT_SUMMARY"
-
-echo "[2/2] Entrenando Residual 3D U-Net..."
+echo "[Training] Residual 3D U-Net..."
 
 if [ ! -f "$MANIFEST_TRAIN" ] || [ ! -f "$MANIFEST_VAL" ]; then
-    echo "ERROR: Manifests de entrenamiento no encontrados. Verifica que la preparación terminó correctamente."
+    echo "ERROR: Manifests not found."
     echo "Train: $MANIFEST_TRAIN (exists: $([ -f "$MANIFEST_TRAIN" ] && echo yes || echo no))"
     echo "Val: $MANIFEST_VAL (exists: $([ -f "$MANIFEST_VAL" ] && echo yes || echo no))"
     exit 1
@@ -54,7 +38,7 @@ N_VAL=$(tail -n +2 "$MANIFEST_VAL" | wc -l)
 echo "Dataset: $N_TRAIN train, $N_VAL val"
 
 if [ "$N_TRAIN" -lt 10 ]; then
-    echo "ERROR: Muy pocas muestras de entrenamiento ($N_TRAIN < 10)"
+    echo "ERROR: Too few training samples ($N_TRAIN < 10)"
     exit 1
 fi
 
@@ -67,7 +51,5 @@ fi
   --num-workers "$NUM_WORKERS" \
   --base-channels "$BASE_CHANNELS"
 
-echo "Listo. Revisa:"
-echo "- QC: $QC_REPORT"
-echo "- Split: $SPLIT_SUMMARY"
-echo "- Checkpoints: $PROJECT_ROOT/checkpoints/resunet3d"
+echo "Training complete. Checkpoints in: $PROJECT_ROOT/checkpoints/resunet3d"
+
