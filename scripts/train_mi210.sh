@@ -4,14 +4,67 @@ set -euo pipefail
 PROJECT_ROOT="${PROJECT_ROOT:-$PWD}"
 PYTHON_BIN="${PYTHON_BIN:-$PROJECT_ROOT/.venv/bin/python}"
 
+echo "=========================================="
+echo "GPU & TORCH DETECTION"
+echo "=========================================="
 echo "Python: $PYTHON_BIN"
 "$PYTHON_BIN" --version
 
-echo "[Checking] torch availability..."
-if ! "$PYTHON_BIN" -c "import torch; print(f'torch {torch.__version__}')" 2>/dev/null; then
-    echo "[Install] Installing torch (CUDA-enabled)..."
-    "$PYTHON_BIN" -m pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 2>&1 | tail -20
+# Detect GPU type
+GPU_TYPE="NONE"
+if command -v rocm-smi &> /dev/null; then
+    echo "[✓] AMD ROCm detected (rocm-smi available)"
+    GPU_TYPE="AMD_ROCM"
+    TORCH_INDEX="https://download.pytorch.org/whl/rocm5.7"
+elif command -v nvidia-smi &> /dev/null; then
+    echo "[✓] NVIDIA CUDA detected (nvidia-smi available)"
+    GPU_TYPE="NVIDIA_CUDA"
+    TORCH_INDEX="https://download.pytorch.org/whl/cu118"
+else
+    echo "[!] WARNING: No GPU detected. Training will run on CPU (~100x slower)"
+    GPU_TYPE="CPU"
+    TORCH_INDEX=""
 fi
+
+echo "[Checking] torch availability..."
+INSTALLED_TORCH=$("$PYTHON_BIN" -c "import torch; print(torch.__version__)" 2>/dev/null || echo "NOT_INSTALLED")
+
+if [ "$INSTALLED_TORCH" = "NOT_INSTALLED" ]; then
+    echo "[✗] torch not installed"
+    if [ "$GPU_TYPE" = "NONE" ]; then
+        echo "[Install] Installing torch (CPU-only)..."
+        "$PYTHON_BIN" -m pip install --upgrade torch torchvision torchaudio 2>&1 | tail -5
+    else
+        echo "[Install] Installing torch with $GPU_TYPE support from $TORCH_INDEX..."
+        "$PYTHON_BIN" -m pip install --upgrade torch torchvision torchaudio --index-url "$TORCH_INDEX" 2>&1 | tail -5
+    fi
+else
+    echo "[✓] torch $INSTALLED_TORCH already installed"
+fi
+
+# Verify GPU detection in PyTorch
+echo "[Checking] GPU availability in PyTorch..."
+GPU_AVAILABLE=$("$PYTHON_BIN" -c "import torch; print(torch.cuda.is_available() or hasattr(torch, 'xpu'))" 2>/dev/null || echo "ERROR")
+
+if [ "$GPU_AVAILABLE" = "True" ]; then
+    echo "[✓] GPU is available to PyTorch"
+    "$PYTHON_BIN" -c "import torch; print(f'  Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"Unknown\"}')"
+elif [ "$GPU_TYPE" = "AMD_ROCM" ]; then
+    echo "[!] WARNING: AMD ROCm detected but PyTorch doesn't see GPU"
+    echo "    Reinstalling with explicit ROCm support..."
+    "$PYTHON_BIN" -m pip uninstall -y torch torchvision torchaudio 2>&1 | tail -2
+    "$PYTHON_BIN" -m pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm5.7 2>&1 | tail -10
+    GPU_AVAILABLE=$("$PYTHON_BIN" -c "import torch; print(torch.cuda.is_available())" 2>/dev/null || echo "FALSE")
+    if [ "$GPU_AVAILABLE" = "True" ]; then
+        echo "[✓] GPU is now available"
+    else
+        echo "[✗] GPU still not detected. Check ROCm installation."
+    fi
+else
+    echo "[!] No GPU available to PyTorch"
+fi
+
+echo "=========================================="
 
 MANIFEST_TRAIN="${MANIFEST_TRAIN:-$PROJECT_ROOT/data/training_npz/manifest_train.csv}"
 MANIFEST_VAL="${MANIFEST_VAL:-$PROJECT_ROOT/data/training_npz/manifest_val.csv}"
