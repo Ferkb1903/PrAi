@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import random
 import sys
 import zipfile
@@ -23,6 +24,22 @@ from src.data.io_npz import load_case_npz
 from src.data.preprocess import maybe_crop_bev
 from src.model.resunet3d import ResidualUNet3D
 
+
+
+def ensure_safe_runtime_dirs() -> None:
+    user = os.environ.get("USER", "user")
+    base_tmp = Path(f"/tmp/miopen_cache_{user}")
+    base_tmp.mkdir(parents=True, exist_ok=True)
+    os.chmod(base_tmp, 0o700)
+
+    tmpdir = os.environ.get("TMPDIR", "").strip()
+    if not tmpdir or not Path(tmpdir).is_dir():
+        os.environ["TMPDIR"] = str(base_tmp)
+
+    miopen_db = base_tmp / "miopen_db"
+    miopen_db.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("MIOPEN_USER_DB_PATH", str(miopen_db))
+    os.environ.setdefault("MIOPEN_CUSTOM_CACHE_DIR", str(base_tmp))
 
 
 class ManifestNPZDataset(Dataset):
@@ -220,6 +237,10 @@ def main() -> None:
     parser.add_argument("--out-dir", type=Path, default=Path("checkpoints/resunet3d"))
     parser.add_argument("--save-every", type=int, default=1, help="Guardar checkpoint cada N épocas")
     args = parser.parse_args()
+
+    ensure_safe_runtime_dirs()
+    print(f"Runtime TMPDIR: {os.environ.get('TMPDIR')}")
+    print(f"MIOPEN_USER_DB_PATH: {os.environ.get('MIOPEN_USER_DB_PATH')}")
 
     random.seed(args.seed)
     np.random.seed(args.seed)
