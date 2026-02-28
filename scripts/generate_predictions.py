@@ -133,6 +133,7 @@ class ManifestNPZDataset(Dataset):
             "x": torch.from_numpy(x),
             "d_low": torch.from_numpy(d_low[None, ...].astype(np.float32)),
             "target": torch.from_numpy(d_high[None, ...].astype(np.float32)),
+            "beam_mask": torch.from_numpy(beam_mask[None, ...].astype(np.float32)),
             "npz_path": str(npz_path),
         }
 
@@ -142,47 +143,86 @@ def visualize_case(
     d_low: np.ndarray,
     target: np.ndarray,
     pred: np.ndarray,
+    beam_mask: np.ndarray,
     npz_name: str,
     out_dir: Path,
-) -> None:
-    """Save visualization of a single case: D_low, Target, Pred, Error."""
+) -> dict:
+    """Save beam-focused visualization: metrics inside/outside beam."""
     
     # Select middle slice
     d = d_low.shape[0]
     mid_z = d // 2
     
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    # Compute errors
+    err_abs = np.abs(pred - target)
+    err_rel = err_abs / (np.abs(target) + 1e-6)
     
-    # D_low
+    # Mask: inside beam (mask > 0.5) vs outside
+    mask_in = beam_mask > 0.5
+    
+    err_in = err_abs[mask_in] if np.any(mask_in) else np.array([])
+    err_out = err_abs[~mask_in] if np.any(~mask_in) else np.array([])
+    
+    metrics = {
+        "case": case_idx,
+        "npz_name": npz_name,
+        "error_mean_in": float(np.mean(err_in)) if len(err_in) > 0 else np.nan,
+        "error_std_in": float(np.std(err_in)) if len(err_in) > 0 else np.nan,
+        "error_max_in": float(np.max(err_in)) if len(err_in) > 0 else np.nan,
+        "error_mean_out": float(np.mean(err_out)) if len(err_out) > 0 else np.nan,
+        "error_std_out": float(np.std(err_out)) if len(err_out) > 0 else np.nan,
+        "error_max_out": float(np.max(err_out)) if len(err_out) > 0 else np.nan,
+        "n_voxels_in": int(np.sum(mask_in)),
+        "n_voxels_out": int(np.sum(~mask_in)),
+    }
+    
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    
+    # Row 1: Beam mask, Target, Prediction
     ax = axes[0, 0]
-    im = ax.imshow(d_low[mid_z], cmap="viridis")
-    ax.set_title("D_low (input)")
+    im = ax.imshow(beam_mask[mid_z], cmap="gray")
+    ax.set_title("Beam Mask")
     plt.colorbar(im, ax=ax)
     
-    # Ground truth
     ax = axes[0, 1]
     im = ax.imshow(target[mid_z], cmap="viridis")
     ax.set_title("Ground Truth (D_high)")
     plt.colorbar(im, ax=ax)
     
-    # Prediction
-    ax = axes[1, 0]
+    ax = axes[0, 2]
     im = ax.imshow(pred[mid_z], cmap="viridis")
     ax.set_title("Prediction")
     plt.colorbar(im, ax=ax)
     
-    # Error
-    err = np.abs(pred - target)
-    ax = axes[1, 1]
-    im = ax.imshow(err[mid_z], cmap="hot")
-    ax.set_title(f"Absolute Error (mean={err.mean():.6f})")
+    # Row 2: Error, Error masked by beam, Error distribution
+    ax = axes[1, 0]
+    im = ax.imshow(err_abs[mid_z], cmap="hot")
+    ax.set_title(f"Abs Error (mean={err_abs.mean():.6f})")
     plt.colorbar(im, ax=ax)
     
+    ax = axes[1, 1]
+    err_masked = np.where(mask_in, err_abs, np.nan)
+    im = ax.imshow(err_masked[mid_z], cmap="hot")
+    ax.set_title(f"Error Inside Beam\n(mean={metrics['error_mean_in']:.6f})")
+    plt.colorbar(im, ax=ax)
+    
+    ax = axes[1, 2]
+    if len(err_in) > 0 and len(err_out) > 0:
+        ax.hist([err_in, err_out], bins=30, label=["Inside beam", "Outside beam"], alpha=0.7)
+        ax.set_xlabel("Absolute Error")
+        ax.set_ylabel("Count")
+        ax.legend()
+        ax.set_title("Error Distribution")
+    else:
+        ax.text(0.5, 0.5, "Insufficient data", ha="center", va="center")
+    
     plt.suptitle(f"Case {case_idx}: {npz_name}")
-    save_path = out_dir / f"pred_{case_idx:03d}_{Path(npz_name).stem}.png"
+    save_path = out_dir / f"pred_{case_idx:03d}_{Path(npz_name).stem}_beam.png"
     plt.savefig(save_path, dpi=100, bbox_inches="tight")
     plt.close()
     print(f"  → Saved: {save_path.name}")
+    
+    return metrics
 
 
 def main() -> None:
@@ -247,6 +287,8 @@ def main() -> None:
 
     # Generate predictions
     case_count = 0
+    all_metrics = []
+    
     with torch.no_grad():
         for batch in tqdm(loader, desc="Predicting"):
             if case_count >= n_cases:
@@ -255,6 +297,7 @@ def main() -> None:
             x = batch["x"].to(device, non_blocking=True)
             d_low = batch["d_low"].to(device, non_blocking=True)
             target = batch["target"].to(device, non_blocking=True)
+            beam_mask = batch["beam_mask"].to(device, non_blocking=True)
             npz_path = batch["npz_path"][0]
 
             try:
@@ -266,16 +309,33 @@ def main() -> None:
                 d_low_np = d_low[0, 0].cpu().numpy()
                 target_np = target[0, 0].cpu().numpy()
                 pred_np = pred[0, 0].cpu().numpy()
+                beam_mask_np = beam_mask[0, 0].cpu().numpy()
 
                 # Visualize
                 npz_name = Path(npz_path).name
-                visualize_case(case_count, d_low_np, target_np, pred_np, npz_name, args.out_dir)
+                metrics = visualize_case(case_count, d_low_np, target_np, pred_np, beam_mask_np, npz_name, args.out_dir)
+                all_metrics.append(metrics)
                 
                 case_count += 1
             except Exception as exc:
                 print(f"[!] Error on case {case_count}: {exc}")
                 continue
 
+    # Save metrics to CSV
+    if all_metrics:
+        import json
+        metrics_path = args.out_dir / "beam_metrics.jsonl"
+        with open(metrics_path, "w") as f:
+            for m in all_metrics:
+                f.write(json.dumps(m) + "\n")
+        print(f"\n[Metrics] Saved to: {metrics_path}")
+        
+        # Print summary
+        inside_errs = [m["error_mean_in"] for m in all_metrics if not np.isnan(m["error_mean_in"])]
+        outside_errs = [m["error_mean_out"] for m in all_metrics if not np.isnan(m["error_mean_out"])]
+        print(f"\n  Inside Beam:  mean_error={np.mean(inside_errs):.6f} ± {np.std(inside_errs):.6f}")
+        print(f"  Outside Beam: mean_error={np.mean(outside_errs):.6f} ± {np.std(outside_errs):.6f}")
+    
     print(f"\n[Done] Predictions saved to: {args.out_dir.resolve()}")
 
 
