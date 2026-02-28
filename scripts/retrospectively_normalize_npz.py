@@ -8,7 +8,6 @@ Use when normalize_doses_global() isn't being applied during initial generation.
 import argparse
 import sys
 from pathlib import Path
-from typing import Optional
 import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -55,25 +54,41 @@ def retrospectively_normalize(npz_path: Path, dose_norm_const: float, dry_run: b
         return False
 
 
+def resolve_npz_files(npz_dir: Path | None, pattern: str, file_list: Path | None) -> list[Path]:
+    if file_list is not None:
+        lines = [line.strip() for line in file_list.read_text(encoding="utf-8").splitlines()]
+        files = [Path(line) for line in lines if line and not line.startswith("#")]
+        return sorted(files)
+
+    if npz_dir is None:
+        raise ValueError("Debes indicar npz_dir o --file-list")
+
+    if not npz_dir.is_dir():
+        raise ValueError(f"{npz_dir} no es un directorio")
+
+    return sorted(npz_dir.glob(pattern))
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Retrospectively normalize NPZ files that weren't properly normalized during generation"
     )
-    parser.add_argument("npz_dir", type=Path, help="Directory containing NPZ files")
+    parser.add_argument("npz_dir", type=Path, nargs="?", help="Directory containing NPZ files")
     parser.add_argument("--dose-norm-const", type=float, default=100.0, help="Normalization constant")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be done without modifying files")
     parser.add_argument("--pattern", type=str, default="*.npz", help="Glob pattern for NPZ files")
+    parser.add_argument("--file-list", type=Path, default=None, help="Optional text file with one NPZ path per line")
     args = parser.parse_args()
-    
-    npz_dir = Path(args.npz_dir)
-    if not npz_dir.is_dir():
-        print(f"Error: {npz_dir} is not a directory")
+
+    try:
+        npz_files = resolve_npz_files(args.npz_dir, args.pattern, args.file_list)
+    except ValueError as exc:
+        print(f"Error: {exc}")
         sys.exit(1)
-    
-    # Find all NPZ files
-    npz_files = sorted(npz_dir.glob(args.pattern))
+
     if not npz_files:
-        print(f"No NPZ files found matching {args.pattern} in {npz_dir}")
+        source_desc = f"file-list {args.file_list}" if args.file_list else f"{args.npz_dir} ({args.pattern})"
+        print(f"No NPZ files found in {source_desc}")
         sys.exit(1)
     
     print(f"Found {len(npz_files)} NPZ files")
