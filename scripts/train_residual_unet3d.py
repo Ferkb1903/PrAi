@@ -306,6 +306,7 @@ def main() -> None:
     parser.add_argument("--out-dir", type=Path, default=Path("checkpoints/resunet3d"))
     parser.add_argument("--save-every", type=int, default=1, help="Guardar checkpoint cada N épocas")
     parser.add_argument("--resume", type=Path, default=None, help="Ruta a checkpoint .pt para reanudar entrenamiento")
+    parser.add_argument("--early-stop-patience", type=int, default=10, help="Detener si no mejora val por N épocas (<=0 desactiva)")
     args = parser.parse_args()
 
     ensure_safe_runtime_dirs()
@@ -382,6 +383,7 @@ def main() -> None:
 
     start_epoch = 1
     best_val = float("inf")
+    epochs_without_improvement = 0
 
     if args.resume is not None:
         if not args.resume.exists():
@@ -395,6 +397,7 @@ def main() -> None:
         resumed_epoch = int(checkpoint.get("epoch", 0))
         start_epoch = resumed_epoch + 1
         best_val = float(checkpoint.get("best_val_l1", float("inf")))
+        epochs_without_improvement = int(checkpoint.get("epochs_without_improvement", 0))
         run_dir = args.resume.parent
         print(f"[Resume] Checkpoint: {args.resume}")
         print(f"[Resume] Última época guardada: {resumed_epoch}; reanudando en época {start_epoch}")
@@ -412,6 +415,7 @@ def main() -> None:
         return
 
     metrics_mode = "a" if args.resume is not None and metrics_path.exists() else "w"
+    last_epoch_completed = start_epoch - 1
     with metrics_path.open(metrics_mode, encoding="utf-8") as mf:
         for epoch in range(start_epoch, args.epochs + 1):
             train_metrics = run_epoch(
@@ -455,12 +459,14 @@ def main() -> None:
                 f"train_l1={train_metrics['loss']:.6f} | train_baseline={train_metrics['baseline_l1']:.6f} | "
                 f"val_l1={val_metrics['loss']:.6f} | val_baseline={val_metrics['baseline_l1']:.6f}"
             )
+            last_epoch_completed = epoch
 
             if scheduler is not None:
                 scheduler.step()
 
             if val_metrics["loss"] < best_val:
                 best_val = val_metrics["loss"]
+                epochs_without_improvement = 0
                 torch.save(
                     {
                         "model": model.state_dict(),
@@ -468,10 +474,13 @@ def main() -> None:
                         "scheduler": scheduler.state_dict() if scheduler is not None else None,
                         "epoch": epoch,
                         "best_val_l1": best_val,
+                        "epochs_without_improvement": epochs_without_improvement,
                         "args": vars(args),
                     },
                     run_dir / "best.pt",
                 )
+            else:
+                epochs_without_improvement += 1
 
             if args.save_every > 0 and (epoch % args.save_every == 0):
                 torch.save(
@@ -481,10 +490,18 @@ def main() -> None:
                         "scheduler": scheduler.state_dict() if scheduler is not None else None,
                         "epoch": epoch,
                         "best_val_l1": best_val,
+                        "epochs_without_improvement": epochs_without_improvement,
                         "args": vars(args),
                     },
                     run_dir / f"epoch_{epoch:03d}.pt",
                 )
+
+            if args.early_stop_patience > 0 and epochs_without_improvement >= args.early_stop_patience:
+                print(
+                    f"[EarlyStopping] Sin mejora en val por {epochs_without_improvement} épocas "
+                    f"(patience={args.early_stop_patience}). Se detiene entrenamiento en epoch {epoch}."
+                )
+                break
 
     test_l1 = None
     test_baseline = None
@@ -506,8 +523,9 @@ def main() -> None:
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
             "scheduler": scheduler.state_dict() if scheduler is not None else None,
-            "epoch": max(args.epochs, start_epoch - 1),
+            "epoch": last_epoch_completed,
             "best_val_l1": best_val,
+            "epochs_without_improvement": epochs_without_improvement,
             "test_l1": test_l1,
             "test_baseline": test_baseline,
             "args": vars(args),
