@@ -32,6 +32,12 @@ def analyze_prediction_npz(npz_path: str):
     e0_mev = float(data["e0_mev"])
     case_id = str(data["case_id"]) if "case_id" in data else "unknown"
     
+    # Ensure spr is at least 3D
+    if spr.ndim == 0:
+        spr = np.full_like(d_low, float(spr), dtype=np.float32)
+    elif spr.ndim == 1 or spr.size == 1:
+        spr = np.full_like(d_low, np.mean(spr), dtype=np.float32)
+    
     print(f"\n{'='*70}")
     print(f"PREDICTION NPZ ANALYSIS: {case_id}")
     print(f"{'='*70}")
@@ -114,8 +120,8 @@ def analyze_prediction_npz(npz_path: str):
         print(f"  Mean: {mean_error:.6f}")
         print(f"  Max:  {max_error:.6f}")
         
-        spr_masked = spr.ravel()[mask]
-        diff_masked = diff.ravel()[mask]
+        spr_masked = spr.ravel()[mask.ravel()]
+        diff_masked = diff.ravel()[mask.ravel()]
         
         if len(spr_masked) > 1 and np.std(spr_masked) > 0 and np.std(diff_masked) > 0:
             corr_matrix = np.corrcoef(spr_masked, diff_masked)
@@ -129,25 +135,31 @@ def analyze_prediction_npz(npz_path: str):
     
     # Profile visualization
     ax = axes[0, 0]
-    ax.plot(profile_pred, label='Prediction', linewidth=2, color='blue')
-    ax.plot(profile_gt, label='Ground Truth', linewidth=2, color='red')
+    ax.plot(profile_pred, label='Prediction', linewidth=2.5, color='blue')
+    ax.plot(profile_gt, label='Ground Truth (D_high)', linewidth=2.5, color='red')
+    profile_low = d_low[:, h_gt, w_gt]
+    ax.plot(profile_low, label='D_low (input)', linewidth=2, color='gray', alpha=0.7)
     ax.axvline(idx_pred[0], color='blue', linestyle='--', alpha=0.5, label=f'Peak Pred ({idx_pred[0]})')
     ax.axvline(idx_gt[0], color='red', linestyle='--', alpha=0.5, label=f'Peak GT ({idx_gt[0]})')
     ax.set_xlabel('Depth Index')
     ax.set_ylabel('Dose')
     ax.set_title('Depth Profile at Peak Location')
-    ax.legend()
+    ax.legend(fontsize=9)
     ax.grid(True, alpha=0.3)
     
-    # Dose difference profile
+    # Dose difference profile (show residuals)
     ax = axes[0, 1]
-    diff_profile = profile_pred - profile_gt
-    ax.plot(diff_profile, linewidth=2, color='purple')
-    ax.fill_between(range(len(diff_profile)), diff_profile, alpha=0.3, color='purple')
+    pred_residual = profile_pred - profile_low  # What model added
+    gt_residual = profile_gt - profile_low      # What should be added
+    ax.plot(gt_residual, linewidth=2.5, color='red', label='GT Residual (D_high - D_low)', alpha=0.8)
+    ax.plot(pred_residual, linewidth=2.5, color='blue', label='Pred Residual (Prediction - D_low)', alpha=0.8)
+    ax.fill_between(range(len(gt_residual)), gt_residual, alpha=0.2, color='red')
+    ax.fill_between(range(len(pred_residual)), pred_residual, alpha=0.2, color='blue')
     ax.axhline(0, color='k', linestyle='-', alpha=0.3)
     ax.set_xlabel('Depth Index')
-    ax.set_ylabel('Dose Difference (Pred - GT)')
-    ax.set_title('Dose Difference Along Depth')
+    ax.set_ylabel('Added Dose (Residual)')
+    ax.set_title('Dose Residual Comparison')
+    ax.legend(fontsize=9)
     ax.grid(True, alpha=0.3)
     
     # SPR profile
@@ -180,9 +192,9 @@ def analyze_prediction_npz(npz_path: str):
     
     # SPR vs Prediction error scatter
     ax = axes[1, 2]
-    scatter_mask = mask & (np.abs(diff.ravel()) < np.std(diff[mask]) * 3) if np.sum(mask) > 0 else np.zeros_like(mask)
+    scatter_mask = mask & (np.abs(diff.ravel().reshape(mask.shape)) < np.std(diff[mask]) * 3) if np.sum(mask) > 0 else np.zeros_like(mask)
     if np.sum(scatter_mask) > 0:
-        ax.scatter(spr.ravel()[scatter_mask], diff.ravel()[scatter_mask], alpha=0.1, s=1)
+        ax.scatter(spr.ravel()[scatter_mask.ravel()], diff.ravel()[scatter_mask.ravel()], alpha=0.1, s=1)
         title_str = f'SPR vs Error (r={correlation:.3f})' if not np.isnan(correlation) else 'SPR vs Error'
     else:
         title_str = 'SPR vs Error (no data)'
