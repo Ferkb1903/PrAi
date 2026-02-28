@@ -5,6 +5,7 @@ import csv
 import json
 import random
 import sys
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -31,10 +32,34 @@ class ManifestNPZDataset(Dataset):
         self.manifest_dir = manifest_csv.parent.resolve()
         self.use_bev_crop = use_bev_crop
         self.crop_size = crop_size
+        self.bad_paths_reported: set[Path] = set()
         if not self.paths:
             raise ValueError(f"Manifest vacío: {manifest_csv}")
+        self.paths = self._filter_invalid_paths(self.paths)
+        if not self.paths:
+            raise ValueError(f"No hay NPZ válidos tras filtrar archivos corruptos en: {manifest_csv}")
 
-    def _resolve_npz_path(self, path: Path) -> Path:
+    def _filter_invalid_paths(self, paths: list[Path]) -> list[Path]:
+        valid: list[Path] = []
+        missing = 0
+        corrupt = 0
+
+        for path in paths:
+            resolved = self._resolve_npz_path(path, raise_if_missing=False)
+            if resolved is None:
+                missing += 1
+                continue
+            if not zipfile.is_zipfile(resolved):
+                corrupt += 1
+                continue
+            valid.append(resolved)
+
+        if missing > 0 or corrupt > 0:
+            print(f"[Dataset] Filtrado inicial: {len(valid)} válidos, {missing} missing, {corrupt} corruptos")
+
+        return valid
+
+    def _resolve_npz_path(self, path: Path, raise_if_missing: bool = True) -> Path | None:
         if path.exists():
             return path
 
@@ -61,14 +86,32 @@ class ManifestNPZDataset(Dataset):
             if candidate.exists():
                 return candidate
 
-        raise FileNotFoundError(f"NPZ not found: {path} (also tried {len(candidates)} fallback paths)")
+        if raise_if_missing:
+            raise FileNotFoundError(f"NPZ not found: {path} (also tried {len(candidates)} fallback paths)")
+        return None
 
     def __len__(self) -> int:
         return len(self.paths)
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        npz_path = self._resolve_npz_path(self.paths[idx])
-        case = load_case_npz(npz_path)
+        n = len(self.paths)
+        last_error: Exception | None = None
+
+        for attempt in range(3):
+            real_idx = (idx + attempt) % n
+            npz_path = self.paths[real_idx]
+            try:
+                case = load_case_npz(npz_path)
+                break
+            except (FileNotFoundError, zipfile.BadZipFile, OSError, ValueError) as exc:
+                last_error = exc
+                if npz_path not in self.bad_paths_reported:
+                    print(f"[Dataset] Saltando NPZ inválido: {npz_path} ({type(exc).__name__})")
+                    self.bad_paths_reported.add(npz_path)
+                continue
+        else:
+            raise RuntimeError(f"No se pudo cargar muestra tras 3 intentos (idx={idx}): {last_error}")
+
         d_low = case.d_low
         spr = case.spr
         d_high = case.d_high
