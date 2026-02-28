@@ -92,8 +92,15 @@ def read_pair_rows(pair_index_csv: Path) -> list[PairRow]:
 def load_hu_spr_points(json_path: Path) -> tuple[np.ndarray, np.ndarray]:
     """Carga tabla HU → SPR desde JSON"""
     data = json.loads(json_path.read_text(encoding="utf-8"))
-    hu_vals = np.array(data["hu"], dtype=np.float32)
-    spr_vals = np.array(data["spr"], dtype=np.float32)
+    if "points" in data:
+        # Formato: {"points": [{"hu": ..., "spr": ...}, ...]}
+        points = data["points"]
+        hu_vals = np.array([p["hu"] for p in points], dtype=np.float32)
+        spr_vals = np.array([p["spr"] for p in points], dtype=np.float32)
+    else:
+        # Formato legacy: {"hu": [...], "spr": [...]}
+        hu_vals = np.array(data["hu"], dtype=np.float32)
+        spr_vals = np.array(data["spr"], dtype=np.float32)
     return hu_vals, spr_vals
 
 
