@@ -253,6 +253,7 @@ def main() -> None:
     parser.add_argument("--crop-size", type=str, default="96,96,96")
     parser.add_argument("--out-dir", type=Path, default=Path("checkpoints/resunet3d"))
     parser.add_argument("--save-every", type=int, default=1, help="Guardar checkpoint cada N épocas")
+    parser.add_argument("--resume", type=Path, default=None, help="Ruta a checkpoint .pt para reanudar entrenamiento")
     args = parser.parse_args()
 
     ensure_safe_runtime_dirs()
@@ -314,14 +315,38 @@ def main() -> None:
     # Re-enable GradScaler for BF16 mixed precision
     scaler = torch.amp.GradScaler(device="cuda") if device.type == "cuda" else None
 
-    run_dir = args.out_dir / datetime.now().strftime("%Y%m%d_%H%M%S")
+    start_epoch = 1
+    best_val = float("inf")
+
+    if args.resume is not None:
+        if not args.resume.exists():
+            raise FileNotFoundError(f"Checkpoint para reanudar no existe: {args.resume}")
+        checkpoint = torch.load(args.resume, map_location=device)
+        model.load_state_dict(checkpoint["model"])
+        if "optimizer" in checkpoint:
+            optimizer.load_state_dict(checkpoint["optimizer"])
+        resumed_epoch = int(checkpoint.get("epoch", 0))
+        start_epoch = resumed_epoch + 1
+        best_val = float(checkpoint.get("best_val_l1", float("inf")))
+        run_dir = args.resume.parent
+        print(f"[Resume] Checkpoint: {args.resume}")
+        print(f"[Resume] Última época guardada: {resumed_epoch}; reanudando en época {start_epoch}")
+        print(f"[Resume] best_val_l1 previo: {best_val:.6f}")
+    else:
+        run_dir = args.out_dir / datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir.mkdir(parents=True, exist_ok=True)
+
     run_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = run_dir / "metrics.jsonl"
     print(f"Run dir: {run_dir}")
 
-    best_val = float("inf")
-    with metrics_path.open("w", encoding="utf-8") as mf:
-        for epoch in range(1, args.epochs + 1):
+    if start_epoch > args.epochs:
+        print(f"[Resume] Nada que entrenar: start_epoch={start_epoch} > epochs={args.epochs}")
+        return
+
+    metrics_mode = "a" if args.resume is not None and metrics_path.exists() else "w"
+    with metrics_path.open(metrics_mode, encoding="utf-8") as mf:
+        for epoch in range(start_epoch, args.epochs + 1):
             train_l1 = run_epoch(model, train_loader, optimizer, device, scaler, desc=f"Epoch {epoch:03d}/Train")
             val_l1 = evaluate(model, val_loader, device)
 
@@ -364,7 +389,7 @@ def main() -> None:
         {
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
-            "epoch": args.epochs,
+            "epoch": max(args.epochs, start_epoch - 1),
             "best_val_l1": best_val,
             "test_l1": test_l1,
             "args": vars(args),

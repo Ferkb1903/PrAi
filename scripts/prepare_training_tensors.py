@@ -340,6 +340,13 @@ def main() -> None:
         spacing_mm = tuple(float(x) for x in low_img.GetSpacing()[::-1])
 
         low_n, high_n = normalize_doses_global(low, high, dose_scale)
+        
+        # DEBUG: Print before/after normalization EVERY TIME
+        if i == 1 or i % 100 == 0:
+            print(f"\nDEBUG [{i}]: dose_scale={dose_scale:.1f}")
+            print(f"  Before norm:  low_max={np.max(low):.2f}, high_max={np.max(high):.2f}")
+            print(f"  After norm:   low_max={np.max(low_n):.2f}, high_max={np.max(high_n):.2f}")
+        
         spr_n = np.clip(spr, 0.0, args.spr_max) / max(args.spr_max, 1e-6)
         beam_mask = build_beam_mask(low_n, args.beam_mask_rel_thr)
 

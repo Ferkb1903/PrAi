@@ -26,8 +26,10 @@ BATCH_SIZE="${BATCH_SIZE:-2}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 BASE_CHANNELS="${BASE_CHANNELS:-24}"
 SAVE_EVERY="${SAVE_EVERY:-1}"
+CROP_SIZE="${CROP_SIZE:-96,96,96}"
+RESUME_CKPT="${RESUME_CKPT:-}"
 
-python scripts/train_residual_unet3d.py \
+CMD=(python scripts/train_residual_unet3d.py \
   --manifest-train "$MANIFEST_TRAIN" \
   --manifest-val "$MANIFEST_VAL" \
   --manifest-test "$MANIFEST_TEST" \
@@ -35,4 +37,11 @@ python scripts/train_residual_unet3d.py \
   --batch-size "$BATCH_SIZE" \
   --num-workers "$NUM_WORKERS" \
   --base-channels "$BASE_CHANNELS" \
-  --save-every "$SAVE_EVERY"
+  --save-every "$SAVE_EVERY" \
+  --crop-size "$CROP_SIZE")
+
+if [ -n "$RESUME_CKPT" ]; then
+  CMD+=(--resume "$RESUME_CKPT")
+fi
+
+"${CMD[@]}"
