@@ -166,9 +166,10 @@ def run_epoch(
     loss_sum = 0.0
     n_batches = 0
     nan_batches = 0
+    oom_batches = 0
 
     with tqdm(loader, desc=desc, disable=False) as pbar:
-        for batch in pbar:
+        for batch_idx, batch in enumerate(pbar, start=1):
             x = batch["x"].to(device, non_blocking=True)
             d_low = batch["d_low"].to(device, non_blocking=True)
             target = batch["target"].to(device, non_blocking=True)
@@ -176,11 +177,25 @@ def run_epoch(
             if is_train:
                 optimizer.zero_grad(set_to_none=True)
 
-            # Use BF16 for forward/backward (faster, safe on ROCm)
-            with torch.amp.autocast(device_type=device.type, enabled=autocast_enabled, dtype=torch.bfloat16):
-                delta = model(x)
-                pred = d_low + delta
-                loss = criterion(pred, target)
+            try:
+                # Use BF16 for forward/backward (faster, safe on ROCm)
+                with torch.amp.autocast(device_type=device.type, enabled=autocast_enabled, dtype=torch.bfloat16):
+                    delta = model(x)
+                    pred = d_low + delta
+                    loss = criterion(pred, target)
+            except RuntimeError as exc:
+                msg = str(exc).lower()
+                if "out of memory" in msg or "hip out of memory" in msg:
+                    oom_batches += 1
+                    print(f"\n[WARNING] OOM en batch {batch_idx}; se salta batch y se libera cache ({oom_batches} OOMs)")
+                    if is_train and optimizer is not None:
+                        optimizer.zero_grad(set_to_none=True)
+                    if device.type == "cuda":
+                        torch.cuda.empty_cache()
+                    if oom_batches > 20:
+                        raise RuntimeError("Demasiados OOM en una época (>20). Reduce --batch-size o --crop-size.") from exc
+                    continue
+                raise
             
             # Detect NaN
             if torch.isnan(loss):
@@ -211,6 +226,8 @@ def run_epoch(
 
     if nan_batches > 0:
         print(f"\n[!] Warning: {nan_batches} batches had NaN loss")
+    if oom_batches > 0:
+        print(f"\n[!] Warning: {oom_batches} batches skipped by OOM")
     
     return loss_sum / max(1, n_batches)
 
