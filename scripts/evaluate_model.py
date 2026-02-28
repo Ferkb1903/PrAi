@@ -28,6 +28,22 @@ from src.data.preprocess import maybe_crop_bev
 from src.model.resunet3d import ResidualUNet3D
 
 
+def ensure_safe_runtime_dirs() -> None:
+    user = os.environ.get("USER", "user")
+    base_tmp = Path(f"/tmp/miopen_cache_{user}")
+    base_tmp.mkdir(parents=True, exist_ok=True)
+    os.chmod(base_tmp, 0o700)
+
+    tmpdir = os.environ.get("TMPDIR", "").strip()
+    if not tmpdir or not Path(tmpdir).is_dir():
+        os.environ["TMPDIR"] = str(base_tmp)
+
+    miopen_db = base_tmp / "miopen_db"
+    miopen_db.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("MIOPEN_USER_DB_PATH", str(miopen_db))
+    os.environ.setdefault("MIOPEN_CUSTOM_CACHE_DIR", str(base_tmp))
+
+
 class ManifestNPZDataset(Dataset):
     def __init__(self, manifest_csv: Path, use_bev_crop: bool = True, crop_size: tuple[int, int, int] = (96, 96, 96)) -> None:
         rows = list(csv.DictReader(manifest_csv.open(encoding="utf-8")))
@@ -160,6 +176,10 @@ def main() -> None:
     parser.add_argument("--no-bev-crop", action="store_true")
     args = parser.parse_args()
 
+    ensure_safe_runtime_dirs()
+    print(f"Runtime TMPDIR: {os.environ.get('TMPDIR')}")
+    print(f"MIOPEN_USER_DB_PATH: {os.environ.get('MIOPEN_USER_DB_PATH')}")
+
     if not args.checkpoint.exists():
         print(f"ERROR: Checkpoint not found: {args.checkpoint}")
         sys.exit(1)
@@ -210,11 +230,15 @@ def main() -> None:
     print("\n" + "="*60)
     print("EVALUATION RESULTS")
     print("="*60)
-    print(f"Mean L1 Loss: {mean_l1:.6f}")
-    print(f"Min L1:       {min(losses):.6f}")
-    print(f"Max L1:       {max(losses):.6f}")
-    print(f"Std Dev:      {np.std(losses):.6f}")
-    print(f"Samples:      {len(losses)}")
+    if losses:
+        print(f"Mean L1 Loss: {mean_l1:.6f}")
+        print(f"Min L1:       {min(losses):.6f}")
+        print(f"Max L1:       {max(losses):.6f}")
+        print(f"Std Dev:      {np.std(losses):.6f}")
+        print(f"Samples:      {len(losses)}")
+    else:
+        print("[!] WARNING: No valid batches evaluated (all skipped due to errors)")
+        print(f"Total samples: {len(dataset)}")
     print("="*60)
 
 
