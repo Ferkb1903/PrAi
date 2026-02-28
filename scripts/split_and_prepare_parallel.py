@@ -80,10 +80,12 @@ export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 mkdir -p "$OUT_DIR"
 mkdir -p logs
 
-CHUNK_CSV="$CHUNKS_DIR/chunk_${{SLURM_ARRAY_TASK_ID:02d}}.csv"
-OUT_CHUNK_DIR="$OUT_DIR/chunk_${{SLURM_ARRAY_TASK_ID:02d}}"
+# Format SLURM_ARRAY_TASK_ID with zero padding (00, 01, 02, ...)
+CHUNK_ID=$(printf "%02d" ${{SLURM_ARRAY_TASK_ID}})
+CHUNK_CSV="$CHUNKS_DIR/chunk_${{CHUNK_ID}}.csv"
+OUT_CHUNK_DIR="$OUT_DIR/chunk_${{CHUNK_ID}}"
 
-echo "Processing chunk ${{SLURM_ARRAY_TASK_ID}} from $CHUNK_CSV"
+echo "Processing chunk ${{SLURM_ARRAY_TASK_ID}} (formatted: ${{CHUNK_ID}}) from $CHUNK_CSV"
 echo "Output: $OUT_CHUNK_DIR"
 
 mkdir -p "$OUT_CHUNK_DIR"
