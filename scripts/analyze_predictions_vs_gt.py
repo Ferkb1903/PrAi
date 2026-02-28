@@ -177,6 +177,7 @@ def analyze_predictions_vs_ground_truth(checkpoint_path: str, npz_path: str, cro
     abs_error = np.abs(diff)
     
     mask = d_high_crop > 0.01
+    correlation = np.nan
     
     if np.sum(mask) > 0:
         mean_error = np.mean(abs_error[mask])
@@ -185,8 +186,15 @@ def analyze_predictions_vs_ground_truth(checkpoint_path: str, npz_path: str, cro
         print(f"  Mean: {mean_error:.6f}")
         print(f"  Max:  {max_error:.6f}")
         
-        correlation = np.corrcoef(spr_crop.ravel()[mask], diff.ravel()[mask])[0, 1]
-        print(f"\nCorrelation between SPR and prediction error: {correlation:.4f}")
+        spr_masked = spr_crop.ravel()[mask]
+        diff_masked = diff.ravel()[mask]
+        
+        if len(spr_masked) > 1 and np.std(spr_masked) > 0 and np.std(diff_masked) > 0:
+            corr_matrix = np.corrcoef(spr_masked, diff_masked)
+            correlation = corr_matrix[0, 1]
+            print(f"\nCorrelation between SPR and prediction error: {correlation:.4f}")
+        else:
+            print(f"\nCorrelation between SPR and prediction error: N/A (insufficient variance)")
     
     # Visualize (same format as analyze_beam.py)
     fig, axes = plt.subplots(2, 3, figsize=(16, 10))
@@ -244,12 +252,15 @@ def analyze_predictions_vs_ground_truth(checkpoint_path: str, npz_path: str, cro
     
     # SPR vs Prediction error scatter
     ax = axes[1, 2]
-    scatter_mask = mask & (np.abs(diff.ravel()) < np.std(diff[mask]) * 3)
+    scatter_mask = mask & (np.abs(diff.ravel()) < np.std(diff[mask]) * 3) if np.sum(mask) > 0 else np.zeros_like(mask)
     if np.sum(scatter_mask) > 0:
         ax.scatter(spr_crop.ravel()[scatter_mask], diff.ravel()[scatter_mask], alpha=0.1, s=1)
+        title_str = f'SPR vs Error (r={correlation:.3f})' if not np.isnan(correlation) else 'SPR vs Error'
+    else:
+        title_str = 'SPR vs Error (no data)'
     ax.set_xlabel('SPR')
     ax.set_ylabel('Prediction Error (Pred - GT)')
-    ax.set_title(f'SPR vs Error (r={correlation:.3f})')
+    ax.set_title(title_str)
     ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
