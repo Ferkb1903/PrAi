@@ -15,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.data.io_npz import save_case_npz
+from src.data.io_npz import save_case_npz, load_case_npz
 from src.data.schema import CaseData
 
 
@@ -356,6 +356,16 @@ def main() -> None:
 
         npz_path = args.out_dir / f"{pair.case_id}_E{int(round(pair.energy_mev))}_spot_{pair.spot_idx}.npz"
         save_case_npz(npz_path, case)
+        
+        # VERIFY: Check that normalization was applied correctly
+        verify_case = load_case_npz(npz_path)
+        high_max = float(np.max(verify_case.d_high))
+        if high_max > 500 and dose_scale > 10:
+            # High dose values but large dose_scale → something went wrong
+            print(f"❌ WARNING: {npz_path.name} has d_high_max={high_max:.2f} (dose_scale={dose_scale}, expected max ~{np.max(case.d_high)/dose_scale:.2f})")
+        elif i == 1:
+            # Print first one as sanity check
+            print(f"✓ Sample: {npz_path.name} d_high_max={high_max:.2f} (dose_scale={dose_scale})")
 
         qc_rows.append({
             "pair_idx": str(pair.pair_idx),
