@@ -135,10 +135,11 @@ def analyze_prediction_npz(npz_path: str):
     
     # Profile visualization
     ax = axes[0, 0]
+    profile_low = d_low[:, h_gt, w_gt]
+    profile_low_scaled = profile_low * 20  # Scale up to see D_low clearly
     ax.plot(profile_pred, label='Prediction', linewidth=2.5, color='blue')
     ax.plot(profile_gt, label='Ground Truth (D_high)', linewidth=2.5, color='red')
-    profile_low = d_low[:, h_gt, w_gt]
-    ax.plot(profile_low, label='D_low (input)', linewidth=2, color='gray', alpha=0.7)
+    ax.plot(profile_low_scaled, label='D_low × 20 (input scaled)', linewidth=2, color='gray', alpha=0.7)
     ax.axvline(idx_pred[0], color='blue', linestyle='--', alpha=0.5, label=f'Peak Pred ({idx_pred[0]})')
     ax.axvline(idx_gt[0], color='red', linestyle='--', alpha=0.5, label=f'Peak GT ({idx_gt[0]})')
     ax.set_xlabel('Depth Index')
