@@ -10,8 +10,15 @@ DOSE_NORM="${3:-1.0}"
 
 # Validación
 if [[ ! -f "$PAIR_INDEX_FILE" ]]; then
-    echo "ERROR: No existe $PAIR_INDEX_FILE"
-    exit 1
+    CANDIDATE=$(find data -maxdepth 6 -type f \( -name "pair_index_low5k.csv" -o -name "pair_index.csv" \) 2>/dev/null | head -n 1 || true)
+    if [[ -n "$CANDIDATE" && -f "$CANDIDATE" ]]; then
+        echo "[WARN] No existe '$PAIR_INDEX_FILE'. Usando detectado: '$CANDIDATE'"
+        PAIR_INDEX_FILE="$CANDIDATE"
+    else
+        echo "ERROR: No existe $PAIR_INDEX_FILE"
+        echo "Sugerencia: busca el archivo con: find data -type f -name 'pair_index*.csv'"
+        exit 1
+    fi
 fi
 
 # Cuenta pares
