@@ -40,8 +40,8 @@ def diagnose_normalization(npz_path: Path, expected_norm_const: float = 100.0) -
     print(f"  d_high max: {d_high_max:>10.2f} Gy")
     
     print(f"\nExpected ranges (if normalized by {expected_norm_const}):")
-    print(f"  d_high should be in range: [0, ~{100:.1f}] Gy")
-    print(f"  (if max raw dose ≈ {expected_norm_const*d_high_max:.1f} Gy)")
+    print("  Typical d_high max often falls in ~50-300 Gy after /100")
+    print(f"  (equivalent raw max estimate ≈ {expected_norm_const*d_high_max:.1f} Gy)")
     
     # Diagnostic checks
     print(f"\n{'─'*70}")
@@ -49,9 +49,16 @@ def diagnose_normalization(npz_path: Path, expected_norm_const: float = 100.0) -
     print(f"{'─'*70}")
     
     # Check 1: Is d_high normalized?
-    if d_high_max > 150:
-        print(f"❌ d_high_max = {d_high_max:.1f} >> APPEARS TO BE RAW (not normalized)")
-        print(f"   If normalized by {expected_norm_const}: expected max ≈ {d_high_max/expected_norm_const:.1f}")
+    # Heuristic bands for dose-norm-const=100:
+    # - <= 600: usually already normalized
+    # - 600..2000: ambiguous, inspect sample manually
+    # - > 2000: likely still raw (pre-normalization)
+    if d_high_max > 2000:
+        print(f"❌ d_high_max = {d_high_max:.1f} >> LIKELY RAW (not normalized)")
+        print(f"   If divided by {expected_norm_const}, it would be ≈ {d_high_max/expected_norm_const:.1f} Gy")
+    elif d_high_max > 600:
+        print(f"⚠️  d_high_max = {d_high_max:.1f} in ambiguous zone (600-2000)")
+        print("   Review a few more files or verify generation logs")
     elif d_high_max < 0.5:
         print(f"⚠️  d_high_max = {d_high_max:.6f} << Very small (possible issue)")
     else:

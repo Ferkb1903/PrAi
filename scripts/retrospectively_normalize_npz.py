@@ -17,7 +17,12 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.data.io_npz import load_case_npz, save_case_npz
 
 
-def retrospectively_normalize(npz_path: Path, dose_norm_const: float, dry_run: bool = False) -> bool:
+def retrospectively_normalize(
+    npz_path: Path,
+    dose_norm_const: float,
+    raw_threshold: float,
+    dry_run: bool = False,
+) -> bool:
     """
     Load an NPZ file, normalize doses, and save it back.
     
@@ -29,8 +34,10 @@ def retrospectively_normalize(npz_path: Path, dose_norm_const: float, dry_run: b
         d_low_orig = float(np.max(case.d_low))
         d_high_orig = float(np.max(case.d_high))
         
-        # Check if already normalized (very small values)
-        if d_high_orig < 200:
+        # Skip files that are likely already normalized.
+        # With dose_norm_const=100, normalized d_high max can be >200 for some beams,
+        # so use a conservative threshold to avoid double-normalization.
+        if d_high_orig < raw_threshold:
             # Already normalized or very small dataset
             return False
         
@@ -75,6 +82,12 @@ def main():
     )
     parser.add_argument("npz_dir", type=Path, nargs="?", help="Directory containing NPZ files")
     parser.add_argument("--dose-norm-const", type=float, default=100.0, help="Normalization constant")
+    parser.add_argument(
+        "--raw-threshold",
+        type=float,
+        default=1000.0,
+        help="Only normalize files with d_high_max >= this value (prevents double-normalization)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Show what would be done without modifying files")
     parser.add_argument("--pattern", type=str, default="*.npz", help="Glob pattern for NPZ files")
     parser.add_argument("--file-list", type=Path, default=None, help="Optional text file with one NPZ path per line")
@@ -93,6 +106,7 @@ def main():
     
     print(f"Found {len(npz_files)} NPZ files")
     print(f"Normalization constant: {args.dose_norm_const}")
+    print(f"Raw threshold: {args.raw_threshold}")
     if args.dry_run:
         print("DRY RUN MODE - Files will NOT be modified")
     print(f"\n{'File':60s} | {'Before':>8s} | {'After':>8s}")
@@ -103,7 +117,7 @@ def main():
     errors = 0
     
     for npz_path in npz_files:
-        if retrospectively_normalize(npz_path, args.dose_norm_const, args.dry_run):
+        if retrospectively_normalize(npz_path, args.dose_norm_const, args.raw_threshold, args.dry_run):
             modified += 1
         else:
             skipped += 1
