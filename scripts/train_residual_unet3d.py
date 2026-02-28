@@ -155,15 +155,18 @@ def run_epoch(
     device: torch.device,
     scaler: torch.amp.GradScaler | None,
     desc: str = "",
-) -> float:
+    exp_loss_alpha: float = 0.0,
+    exp_loss_max_weight: float = 10.0,
+    use_beam_mask: bool = True,
+) -> dict[str, float]:
     is_train = optimizer is not None
     model.train(is_train)
-    criterion = nn.L1Loss()
     
     # Use BF16 mixed precision (safe for ROCm)
     autocast_enabled = device.type == "cuda"
 
     loss_sum = 0.0
+    baseline_l1_sum = 0.0
     n_batches = 0
     nan_batches = 0
     oom_batches = 0
@@ -173,6 +176,8 @@ def run_epoch(
             x = batch["x"].to(device, non_blocking=True)
             d_low = batch["d_low"].to(device, non_blocking=True)
             target = batch["target"].to(device, non_blocking=True)
+            beam_mask = x[:, 3:4, ...] if use_beam_mask else torch.ones_like(target)
+            beam_mask = beam_mask.to(target.dtype)
 
             if is_train:
                 optimizer.zero_grad(set_to_none=True)
@@ -182,7 +187,23 @@ def run_epoch(
                 with torch.amp.autocast(device_type=device.type, enabled=autocast_enabled, dtype=torch.bfloat16):
                     delta = model(x)
                     pred = d_low + delta
-                    loss = criterion(pred, target)
+                    diff = torch.abs(pred - target)
+                    weights = beam_mask.to(diff.dtype)
+
+                    if exp_loss_alpha > 0.0:
+                        norm_target = target / torch.clamp(target.abs().max(), min=1e-3)
+                        exp_w = torch.exp(exp_loss_alpha * norm_target)
+                        if exp_loss_max_weight > 0:
+                            exp_w = torch.clamp(exp_w, max=exp_loss_max_weight)
+                        weights = weights * exp_w
+
+                    weighted_diff = (diff * weights).float()
+                    denom = torch.clamp(weights.sum().float(), min=1.0)
+                    loss = weighted_diff.sum() / denom
+
+                    baseline_diff = torch.abs(d_low - target) * beam_mask
+                    baseline_denom = torch.clamp(beam_mask.sum().float(), min=1.0)
+                    baseline_l1_sum += float((baseline_diff.sum() / baseline_denom).item())
             except RuntimeError as exc:
                 msg = str(exc).lower()
                 if "out of memory" in msg or "hip out of memory" in msg:
@@ -229,12 +250,35 @@ def run_epoch(
     if oom_batches > 0:
         print(f"\n[!] Warning: {oom_batches} batches skipped by OOM")
     
-    return loss_sum / max(1, n_batches)
+    return {
+        "loss": loss_sum / max(1, n_batches),
+        "baseline_l1": baseline_l1_sum / max(1, n_batches),
+        "nan_batches": float(nan_batches),
+        "oom_batches": float(oom_batches),
+    }
 
 
-def evaluate(model: nn.Module, loader: DataLoader, device: torch.device) -> float:
+def evaluate(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    exp_loss_alpha: float = 0.0,
+    exp_loss_max_weight: float = 10.0,
+    use_beam_mask: bool = True,
+    desc: str = "Eval",
+) -> dict[str, float]:
     with torch.no_grad():
-        return run_epoch(model, loader, None, device, None)
+        return run_epoch(
+            model,
+            loader,
+            None,
+            device,
+            None,
+            desc=desc,
+            exp_loss_alpha=exp_loss_alpha,
+            exp_loss_max_weight=exp_loss_max_weight,
+            use_beam_mask=use_beam_mask,
+        )
 
 
 def main() -> None:
@@ -245,12 +289,20 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--num-workers", type=int, default=0, help="DataLoader workers (0 = main process only, safer)")
-    parser.add_argument("--lr", type=float, default=1.5e-4, help="Learning rate (BF16 safe)")
+    parser.add_argument("--lr", type=float, default=2.5e-4, help="Learning rate (BF16 safe)")
+    parser.add_argument("--min-lr", type=float, default=5e-6, help="Min LR for cosine scheduler")
+    parser.add_argument("--lr-scheduler", type=str, choices=["none", "cosine", "exp"], default="cosine")
+    parser.add_argument("--lr-gamma", type=float, default=0.97, help="Gamma for exp scheduler")
     parser.add_argument("--weight-decay", type=float, default=1e-5)
     parser.add_argument("--base-channels", type=int, default=24)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--no-bev-crop", action="store_true")
     parser.add_argument("--crop-size", type=str, default="96,96,96")
+    parser.add_argument("--exp-loss-alpha", type=float, default=0.0, help="Exponential voxel weighting (0 disables)")
+    parser.add_argument("--exp-loss-max-weight", type=float, default=25.0, help="Clip for exponential loss weights (<=0 disables)")
+    parser.add_argument("--no-loss-beam-mask", action="store_true", help="No beam-mask weighting (use full volume)")
+    parser.add_argument("--use-se-blocks", action="store_true", help="Enable SE attention blocks")
+    parser.add_argument("--se-reduction", type=int, default=8, help="Channel reduction for SE blocks")
     parser.add_argument("--out-dir", type=Path, default=Path("checkpoints/resunet3d"))
     parser.add_argument("--save-every", type=int, default=1, help="Guardar checkpoint cada N épocas")
     parser.add_argument("--resume", type=Path, default=None, help="Ruta a checkpoint .pt para reanudar entrenamiento")
@@ -302,7 +354,13 @@ def main() -> None:
         )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = ResidualUNet3D(in_channels=4, base_channels=args.base_channels, residual=True).to(device)
+    model = ResidualUNet3D(
+        in_channels=4,
+        base_channels=args.base_channels,
+        residual=True,
+        use_se=args.use_se_blocks,
+        se_reduction=args.se_reduction,
+    ).to(device)
     
     # Use Adam with conservative settings
     optimizer = torch.optim.Adam(
@@ -312,6 +370,13 @@ def main() -> None:
         eps=1e-8,
         weight_decay=args.weight_decay
     )
+    scheduler = None
+    if args.lr_scheduler == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=args.epochs, eta_min=args.min_lr
+        )
+    elif args.lr_scheduler == "exp":
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.lr_gamma)
     # Re-enable GradScaler for BF16 mixed precision
     scaler = torch.amp.GradScaler(device="cuda") if device.type == "cuda" else None
 
@@ -325,6 +390,8 @@ def main() -> None:
         model.load_state_dict(checkpoint["model"])
         if "optimizer" in checkpoint:
             optimizer.load_state_dict(checkpoint["optimizer"])
+        if scheduler is not None and "scheduler" in checkpoint and checkpoint["scheduler"] is not None:
+            scheduler.load_state_dict(checkpoint["scheduler"])
         resumed_epoch = int(checkpoint.get("epoch", 0))
         start_epoch = resumed_epoch + 1
         best_val = float(checkpoint.get("best_val_l1", float("inf")))
@@ -347,21 +414,58 @@ def main() -> None:
     metrics_mode = "a" if args.resume is not None and metrics_path.exists() else "w"
     with metrics_path.open(metrics_mode, encoding="utf-8") as mf:
         for epoch in range(start_epoch, args.epochs + 1):
-            train_l1 = run_epoch(model, train_loader, optimizer, device, scaler, desc=f"Epoch {epoch:03d}/Train")
-            val_l1 = evaluate(model, val_loader, device)
+            train_metrics = run_epoch(
+                model,
+                train_loader,
+                optimizer,
+                device,
+                scaler,
+                desc=f"Epoch {epoch:03d}/Train",
+                exp_loss_alpha=args.exp_loss_alpha,
+                exp_loss_max_weight=args.exp_loss_max_weight,
+                use_beam_mask=not args.no_loss_beam_mask,
+            )
+            val_metrics = evaluate(
+                model,
+                val_loader,
+                device,
+                exp_loss_alpha=args.exp_loss_alpha,
+                exp_loss_max_weight=args.exp_loss_max_weight,
+                use_beam_mask=not args.no_loss_beam_mask,
+                desc=f"Epoch {epoch:03d}/Val",
+            )
 
-            row = {"epoch": epoch, "train_l1": train_l1, "val_l1": val_l1}
+            current_lr = optimizer.param_groups[0]["lr"]
+            if scheduler is not None:
+                current_lr = scheduler.get_last_lr()[0]
+
+            row = {
+                "epoch": epoch,
+                "train_l1": train_metrics["loss"],
+                "train_baseline": train_metrics["baseline_l1"],
+                "val_l1": val_metrics["loss"],
+                "val_baseline": val_metrics["baseline_l1"],
+                "lr": current_lr,
+            }
             mf.write(json.dumps(row) + "\n")
             mf.flush()
 
-            print(f"Epoch {epoch:03d} | train_l1={train_l1:.6f} | val_l1={val_l1:.6f}")
+            print(
+                f"Epoch {epoch:03d} | lr={current_lr:.6f} | "
+                f"train_l1={train_metrics['loss']:.6f} | train_baseline={train_metrics['baseline_l1']:.6f} | "
+                f"val_l1={val_metrics['loss']:.6f} | val_baseline={val_metrics['baseline_l1']:.6f}"
+            )
 
-            if val_l1 < best_val:
-                best_val = val_l1
+            if scheduler is not None:
+                scheduler.step()
+
+            if val_metrics["loss"] < best_val:
+                best_val = val_metrics["loss"]
                 torch.save(
                     {
                         "model": model.state_dict(),
                         "optimizer": optimizer.state_dict(),
+                        "scheduler": scheduler.state_dict() if scheduler is not None else None,
                         "epoch": epoch,
                         "best_val_l1": best_val,
                         "args": vars(args),
@@ -374,6 +478,7 @@ def main() -> None:
                     {
                         "model": model.state_dict(),
                         "optimizer": optimizer.state_dict(),
+                        "scheduler": scheduler.state_dict() if scheduler is not None else None,
                         "epoch": epoch,
                         "best_val_l1": best_val,
                         "args": vars(args),
@@ -382,16 +487,29 @@ def main() -> None:
                 )
 
     test_l1 = None
+    test_baseline = None
     if test_loader is not None:
-        test_l1 = evaluate(model, test_loader, device)
+        test_metrics = evaluate(
+            model,
+            test_loader,
+            device,
+            exp_loss_alpha=args.exp_loss_alpha,
+            exp_loss_max_weight=args.exp_loss_max_weight,
+            use_beam_mask=not args.no_loss_beam_mask,
+            desc="Test",
+        )
+        test_l1 = test_metrics["loss"]
+        test_baseline = test_metrics["baseline_l1"]
 
     torch.save(
         {
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict() if scheduler is not None else None,
             "epoch": max(args.epochs, start_epoch - 1),
             "best_val_l1": best_val,
             "test_l1": test_l1,
+            "test_baseline": test_baseline,
             "args": vars(args),
         },
         run_dir / "last.pt",
@@ -400,7 +518,7 @@ def main() -> None:
     print(f"Run dir: {run_dir}")
     print(f"Best val L1: {best_val:.6f}")
     if test_l1 is not None:
-        print(f"Test L1: {test_l1:.6f}")
+        print(f"Test L1: {test_l1:.6f} (baseline={test_baseline:.6f})")
 
 
 if __name__ == "__main__":

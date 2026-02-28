@@ -66,10 +66,11 @@ def main() -> None:
     parser.add_argument("--launch-fraction", type=float, default=0.5)
     parser.add_argument("--spot-radius-mm", type=float, default=60.0)
 
-    parser.add_argument("--low-events", type=int, default=50000)
+    parser.add_argument("--low-events", type=int, default=5000)
     parser.add_argument("--high-events", type=int, default=1000000)
     parser.add_argument("--low-seed", type=int, default=101)
     parser.add_argument("--high-seed", type=int, default=202)
+    parser.add_argument("--skip-high", action="store_true", help="Solo lanza simulaciones low (omite high)")
 
     parser.add_argument("--source-z-cm", type=float, default=-30.0)
     parser.add_argument("--resample-mm", type=float, default=2.0)
@@ -78,7 +79,7 @@ def main() -> None:
     parser.add_argument("--walltime", type=str, default="08:00:00")
     parser.add_argument("--cpus", type=int, default=1)
     parser.add_argument("--mem-gb", type=int, default=8)
-    parser.add_argument("--array-concurrency", type=int, default=50)
+    parser.add_argument("--array-concurrency", type=int, default=20)
     args = parser.parse_args()
 
     if not args.manifest.exists():
@@ -154,10 +155,11 @@ def main() -> None:
                     f"SOURCE_X_MM={sx:.3f} SOURCE_Y_MM={sy:.3f} PYTHON_BIN=\"$PYTHON_BIN\" bash scripts/run_gate_voxelized_shared_env.sh "
                     f"\"{pre_mhd}\" \"{low_out}\" {energy} {args.low_events} {args.low_seed} point 1 1 1.0 {args.source_z_cm} \"{args.hu_map_json}\""
                 )
-                lines.append(
-                    f"SOURCE_X_MM={sx:.3f} SOURCE_Y_MM={sy:.3f} PYTHON_BIN=\"$PYTHON_BIN\" bash scripts/run_gate_voxelized_shared_env.sh "
-                    f"\"{pre_mhd}\" \"{high_out}\" {energy} {args.high_events} {args.high_seed} point 1 1 1.0 {args.source_z_cm} \"{args.hu_map_json}\""
-                )
+                if not args.skip_high:
+                    lines.append(
+                        f"SOURCE_X_MM={sx:.3f} SOURCE_Y_MM={sy:.3f} PYTHON_BIN=\"$PYTHON_BIN\" bash scripts/run_gate_voxelized_shared_env.sh "
+                        f"\"{pre_mhd}\" \"{high_out}\" {energy} {args.high_events} {args.high_seed} point 1 1 1.0 {args.source_z_cm} \"{args.hu_map_json}\""
+                    )
                 pair_index_rows.append(
                     {
                         "case_id": case_id,
@@ -247,7 +249,13 @@ def main() -> None:
                     'fi',
                     'mkdir -p "$low_out" "$high_out"',
                     f'SOURCE_X_MM="$spot_x_mm" SOURCE_Y_MM="$spot_y_mm" PYTHON_BIN="$PYTHON_BIN" bash scripts/run_gate_voxelized_shared_env.sh "$pre_mhd" "$low_out" "$energy_mev" {args.low_events} {args.low_seed} point 1 1 1.0 {args.source_z_cm} "{args.hu_map_json}"',
-                    f'SOURCE_X_MM="$spot_x_mm" SOURCE_Y_MM="$spot_y_mm" PYTHON_BIN="$PYTHON_BIN" bash scripts/run_gate_voxelized_shared_env.sh "$pre_mhd" "$high_out" "$energy_mev" {args.high_events} {args.high_seed} point 1 1 1.0 {args.source_z_cm} "{args.hu_map_json}"',
+                    *(
+                        []
+                        if args.skip_high
+                        else [
+                            f'SOURCE_X_MM="$spot_x_mm" SOURCE_Y_MM="$spot_y_mm" PYTHON_BIN="$PYTHON_BIN" bash scripts/run_gate_voxelized_shared_env.sh "$pre_mhd" "$high_out" "$energy_mev" {args.high_events} {args.high_seed} point 1 1 1.0 {args.source_z_cm} "{args.hu_map_json}"'
+                        ]
+                    ),
                 ]
             )
             + "\n",
@@ -255,7 +263,7 @@ def main() -> None:
         )
         run_pair_array.chmod(0o755)
 
-        submit_array = jobs_root / "submit_array_50.sh"
+        submit_array = jobs_root / f"submit_array_{args.array_concurrency}.sh"
         submit_array.write_text(
             "\n".join(
                 [
@@ -282,7 +290,7 @@ def main() -> None:
     print(f"Pair index: {pair_index_csv}")
     if args.scheduler == "slurm" and pair_index_rows:
         print(f"Array runner: {jobs_root / 'run_pair_array.sh'}")
-        print(f"Array submit: {jobs_root / 'submit_array_50.sh'}")
+        print(f"Array submit: {jobs_root / f'submit_array_{args.array_concurrency}.sh'}")
 
 
 if __name__ == "__main__":
