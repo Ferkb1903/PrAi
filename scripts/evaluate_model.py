@@ -177,8 +177,17 @@ def main() -> None:
     crop_size = (crop_tokens[0], crop_tokens[1], crop_tokens[2])
 
     # Load model
-    model = ResidualUNet3D(in_channels=4, base_channels=args.base_channels, residual=True).to(device)
     checkpoint = torch.load(args.checkpoint, map_location=device)
+    
+    # Read base_channels from checkpoint if available; otherwise use CLI arg
+    if "args" in checkpoint and "base_channels" in checkpoint["args"]:
+        base_channels = checkpoint["args"]["base_channels"]
+        print(f"[Checkpoint] Reading base_channels={base_channels} from checkpoint")
+    else:
+        base_channels = args.base_channels
+        print(f"[Checkpoint] Using CLI base_channels={base_channels}")
+    
+    model = ResidualUNet3D(in_channels=4, base_channels=base_channels, residual=True).to(device)
     model.load_state_dict(checkpoint["model"])
     print(f"[Checkpoint] Loaded: {args.checkpoint}")
     print(f"[Checkpoint] Trained until epoch {checkpoint.get('epoch', '?')}")
