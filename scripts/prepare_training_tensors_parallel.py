@@ -273,7 +273,7 @@ def main() -> None:
     parser.add_argument("--pair-index-csv", type=Path, required=True)
     parser.add_argument("--pair-idx", type=int, required=True, help="Índice del pair a procesar (0-based)")
     parser.add_argument("--out-dir", type=Path, default=Path("data/training_npz/spot_campaign_v2_low5k"))
-    parser.add_argument("--hu-spr-json", type=Path, default=Path("data/schneider_hu_spr.json"))
+    parser.add_argument("--hu-spr-json", type=Path, default=Path("configs/hu_spr_schneider_v1.json"))
     parser.add_argument("--dose-stem", default="d")
     parser.add_argument("--dose-norm-const", type=float, default=1.0)
     parser.add_argument("--spr-max", type=float, default=1.25)
