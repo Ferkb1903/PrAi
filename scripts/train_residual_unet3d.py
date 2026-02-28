@@ -218,6 +218,7 @@ def main() -> None:
     parser.add_argument("--no-bev-crop", action="store_true")
     parser.add_argument("--crop-size", type=str, default="96,96,96")
     parser.add_argument("--out-dir", type=Path, default=Path("checkpoints/resunet3d"))
+    parser.add_argument("--save-every", type=int, default=1, help="Guardar checkpoint cada N épocas")
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -278,6 +279,7 @@ def main() -> None:
     run_dir = args.out_dir / datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = run_dir / "metrics.jsonl"
+    print(f"Run dir: {run_dir}")
 
     best_val = float("inf")
     with metrics_path.open("w", encoding="utf-8") as mf:
@@ -302,6 +304,18 @@ def main() -> None:
                         "args": vars(args),
                     },
                     run_dir / "best.pt",
+                )
+
+            if args.save_every > 0 and (epoch % args.save_every == 0):
+                torch.save(
+                    {
+                        "model": model.state_dict(),
+                        "optimizer": optimizer.state_dict(),
+                        "epoch": epoch,
+                        "best_val_l1": best_val,
+                        "args": vars(args),
+                    },
+                    run_dir / f"epoch_{epoch:03d}.pt",
                 )
 
     test_l1 = None
