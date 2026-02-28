@@ -28,16 +28,47 @@ class ManifestNPZDataset(Dataset):
     def __init__(self, manifest_csv: Path, use_bev_crop: bool = True, crop_size: tuple[int, int, int] = (96, 96, 96)) -> None:
         rows = list(csv.DictReader(manifest_csv.open(encoding="utf-8")))
         self.paths = [Path(r["npz_path"]) for r in rows]
+        self.manifest_dir = manifest_csv.parent.resolve()
         self.use_bev_crop = use_bev_crop
         self.crop_size = crop_size
         if not self.paths:
             raise ValueError(f"Manifest vacío: {manifest_csv}")
 
+    def _resolve_npz_path(self, path: Path) -> Path:
+        if path.exists():
+            return path
+
+        candidates: list[Path] = []
+
+        # Common case after merging chunk outputs:
+        # manifest still references .../chunk_xx/file.npz but file moved to root dir.
+        candidates.append(self.manifest_dir / path.name)
+
+        # If path is relative, also try relative to manifest dir.
+        if not path.is_absolute():
+            candidates.append((self.manifest_dir / path).resolve())
+
+        # Try removing any chunk_* directory from the original path.
+        parts = list(path.parts)
+        filtered_parts = [p for p in parts if not p.startswith("chunk_")]
+        if filtered_parts != parts:
+            try:
+                candidates.append(Path(*filtered_parts))
+            except TypeError:
+                pass
+
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+
+        raise FileNotFoundError(f"NPZ not found: {path} (also tried {len(candidates)} fallback paths)")
+
     def __len__(self) -> int:
         return len(self.paths)
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        case = load_case_npz(self.paths[idx])
+        npz_path = self._resolve_npz_path(self.paths[idx])
+        case = load_case_npz(npz_path)
         d_low = case.d_low
         spr = case.spr
         d_high = case.d_high
