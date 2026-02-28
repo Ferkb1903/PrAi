@@ -69,8 +69,8 @@ def run_epoch(
     model.train(is_train)
     criterion = nn.L1Loss()
     
-    # Disable mixed precision for now (may cause NaN with ROCm)
-    autocast_enabled = False
+    # Use BF16 mixed precision (safe for ROCm)
+    autocast_enabled = device.type == "cuda"
 
     loss_sum = 0.0
     n_batches = 0
@@ -85,7 +85,8 @@ def run_epoch(
             if is_train:
                 optimizer.zero_grad(set_to_none=True)
 
-            with torch.amp.autocast(device_type=device.type, enabled=autocast_enabled):
+            # Use BF16 for forward/backward (faster, safe on ROCm)
+            with torch.amp.autocast(device_type=device.type, enabled=autocast_enabled, dtype=torch.bfloat16):
                 delta = model(x)
                 pred = d_low + delta
                 loss = criterion(pred, target)
@@ -136,7 +137,7 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--num-workers", type=int, default=0, help="DataLoader workers (0 = main process only, safer)")
-    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate (reduced from 2e-4 for stability)")
+    parser.add_argument("--lr", type=float, default=1.5e-4, help="Learning rate (BF16 safe)")
     parser.add_argument("--weight-decay", type=float, default=1e-5)
     parser.add_argument("--base-channels", type=int, default=24)
     parser.add_argument("--seed", type=int, default=42)
@@ -189,16 +190,16 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = ResidualUNet3D(in_channels=4, base_channels=args.base_channels, residual=True).to(device)
     
-    # Use Adam (not AdamW) to reduce numerical issues, with conservative betas
+    # Use Adam with conservative settings
     optimizer = torch.optim.Adam(
         model.parameters(), 
         lr=args.lr, 
-        betas=(0.9, 0.999),  # Default betas
+        betas=(0.9, 0.999),
         eps=1e-8,
         weight_decay=args.weight_decay
     )
-    # Disable GradScaler (we're not using mixed precision)
-    scaler = None
+    # Re-enable GradScaler for BF16 mixed precision
+    scaler = torch.amp.GradScaler(device="cuda") if device.type == "cuda" else None
 
     run_dir = args.out_dir / datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
