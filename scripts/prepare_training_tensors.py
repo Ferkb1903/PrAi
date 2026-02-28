@@ -221,6 +221,15 @@ def main() -> None:
         dose_scale = float(args.dose_norm_const)
     else:
         dose_scale = 1.0
+    
+    # DEBUG: Print dose_scale to verify it's being used
+    print(f"\n{'='*70}")
+    print(f"DOSE NORMALIZATION CONFIGURATION")
+    print(f"{'='*70}")
+    print(f"  dose_norm_const parameter: {args.dose_norm_const}")
+    print(f"  dose_scale being used: {dose_scale:.6f}")
+    print(f"  Output directory: {args.out_dir}")
+    print(f"{'='*70}\n")
 
     for i, pair in enumerate(pair_rows, start=1):
         low_dir = _resolve_existing_dir(pair.low_out)
