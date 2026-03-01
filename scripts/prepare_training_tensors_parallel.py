@@ -28,6 +28,18 @@ from src.data.io_npz import save_case_npz
 from src.data.schema import CaseData
 
 
+def _to_jsonable(value):
+    if isinstance(value, (np.floating, np.integer)):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, dict):
+        return {k: _to_jsonable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_to_jsonable(v) for v in value]
+    return value
+
+
 @dataclass
 class PairRow:
     pair_idx: int
@@ -328,7 +340,10 @@ def main() -> None:
     # Escribe resultado a JSON (para agregador)
     result_json = args.out_dir / f"pair_{args.pair_idx:06d}.json"
     result_json.parent.mkdir(parents=True, exist_ok=True)
-    result_json.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+    result_json.write_text(
+        json.dumps(_to_jsonable(result), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
     # Log en stdout
     status = "✓" if result["qc_ok"] else "✗"
