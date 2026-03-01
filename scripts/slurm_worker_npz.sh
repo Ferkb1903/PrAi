@@ -9,9 +9,12 @@ if [[ -f .venv/bin/activate ]]; then
     source .venv/bin/activate
 fi
 
+PAIR_OFFSET="${PAIR_OFFSET:-0}"
+GLOBAL_PAIR_IDX=$((PAIR_OFFSET + SLURM_ARRAY_TASK_ID))
+
 # Ejecuta script de procesamiento del pair
 python scripts/prepare_training_tensors_parallel.py \
     --pair-index-csv "$PAIR_INDEX_FILE" \
-    --pair-idx "$SLURM_ARRAY_TASK_ID" \
+    --pair-idx "$GLOBAL_PAIR_IDX" \
     --out-dir "$OUT_DIR" \
     --dose-norm-const "$DOSE_NORM"

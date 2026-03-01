@@ -46,22 +46,35 @@ mkdir -p "$LOGS_DIR"
 PAIR_INDEX_ABS="$(cd "$(dirname "$PAIR_INDEX_FILE")" && pwd)/$(basename "$PAIR_INDEX_FILE")"
 OUT_DIR_ABS="$(mkdir -p "$OUT_DIR" && cd "$OUT_DIR" && pwd)"
 
-# Lanza array job
-JOB_OUTPUT=$(sbatch \
-    --array=0-$((N_PAIRS-1))%200 \
-    --job-name="npz_parallel" \
-    --output="$LOGS_DIR/job_%a.log" \
-    --error="$LOGS_DIR/job_%a.err" \
-    --export="PAIR_INDEX_FILE=$PAIR_INDEX_ABS,OUT_DIR=$OUT_DIR_ABS,DOSE_NORM=$DOSE_NORM" \
-    scripts/slurm_worker_npz.sh
-)
+MAX_ARRAY_SIZE=1000
+JOB_IDS=()
 
-JOB_ID=$(echo "$JOB_OUTPUT" | grep -oP 'Submitted batch job \K\d+')
+for OFFSET in $(seq 0 "$MAX_ARRAY_SIZE" $((N_PAIRS - 1))); do
+    REM=$((N_PAIRS - OFFSET))
+    if (( REM > MAX_ARRAY_SIZE )); then
+        LAST=999
+    else
+        LAST=$((REM - 1))
+    fi
 
-echo "✓ Job array submitted: $JOB_ID"
+    echo "Submitting chunk: offset=$OFFSET array=0-$LAST%200"
+    JOB_OUTPUT=$(sbatch \
+        --array=0-${LAST}%200 \
+        --job-name="npz_parallel" \
+        --output="$LOGS_DIR/job_%A_%a.log" \
+        --error="$LOGS_DIR/job_%A_%a.err" \
+        --export="PAIR_INDEX_FILE=$PAIR_INDEX_ABS,OUT_DIR=$OUT_DIR_ABS,DOSE_NORM=$DOSE_NORM,PAIR_OFFSET=$OFFSET" \
+        scripts/slurm_worker_npz.sh
+    )
+
+    JOB_ID=$(echo "$JOB_OUTPUT" | grep -oP 'Submitted batch job \K\d+')
+    JOB_IDS+=("$JOB_ID")
+done
+
+echo "✓ Jobs submitted: ${JOB_IDS[*]}"
 echo ""
 echo "Monitor:"
-echo "  squeue -j $JOB_ID"
+echo "  squeue -u \$USER | grep npz_parallel"
 echo "  tail -f $LOGS_DIR/job_*.log"
 echo ""
 echo "Cuando termine (all jobs), ejecuta:"
