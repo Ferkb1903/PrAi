@@ -118,6 +118,11 @@ def normalize_doses_global(
     return low / dose_scale, high / dose_scale
 
 
+def build_beam_mask(low_dose_norm: np.ndarray, rel_threshold: float) -> np.ndarray:
+    thr = float(np.max(low_dose_norm)) * rel_threshold
+    return (low_dose_norm >= thr).astype(np.float32)
+
+
 def qc_pair(
     low: np.ndarray,
     high: np.ndarray,
@@ -152,9 +157,11 @@ def process_single_pair(
     hu_points: np.ndarray,
     spr_points: np.ndarray,
     dose_scale: float,
-    dose_stem: str = "d",
-    spr_max: float = 1.25,
+    dose_stem: str = "dose_voxelized_ct_edep",
+    spr_max: float = 2.0,
     max_uncertainty: float = 0.5,
+    energy_norm_den: float = 250.0,
+    beam_mask_rel_thr: float = 0.05,
 ) -> dict:
     """
     Procesa UN ÚNICO par y retorna dict con resultado.
@@ -239,18 +246,18 @@ def process_single_pair(
     low_n, high_n = normalize_doses_global(low, high, dose_scale)
     spr_n = np.clip(spr, 0.0, spr_max) / max(spr_max, 1e-6)
 
+    beam_mask = build_beam_mask(low_n, beam_mask_rel_thr)
+
     # Construye CaseData
     case_data = CaseData(
+        d_low=low_n.astype(np.float32),
+        spr=spr_n.astype(np.float32),
+        d_high=high_n.astype(np.float32),
+        e0_mev=float(pair.energy_mev / max(energy_norm_den, 1e-6)),
+        spacing_mm=np.asarray(spacing_mm, dtype=np.float32),
+        beam_axis=2,
         case_id=pair.case_id,
-        energy_mev=pair.energy_mev,
-        spot_idx=pair.spot_idx,
-        hu=hu,
-        spr=spr_n,
-        dose_low=low_n,
-        dose_high=high_n,
-        dose_low_unc=low_unc / max(np.max(low), 1e-6),
-        dose_high_unc=high_unc / max(np.max(high), 1e-6),
-        spacing_mm=spacing_mm,
+        beam_mask=beam_mask,
     )
 
     # Genera nombre archivo NPZ
@@ -261,7 +268,7 @@ def process_single_pair(
     # Guarda NPZ
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
-        save_case_npz(case_data, npz_path)
+        save_case_npz(npz_path, case_data)
         result["qc_ok"] = True
         result["npz_path"] = str(npz_path)
         result["reason"] = "ok"
@@ -283,8 +290,10 @@ def main() -> None:
     parser.add_argument("--hu-spr-json", type=Path, default=Path("configs/hu_spr_schneider_v1.json"))
     parser.add_argument("--dose-stem", default="dose_voxelized_ct_edep")
     parser.add_argument("--dose-norm-const", type=float, default=1.0)
-    parser.add_argument("--spr-max", type=float, default=1.25)
+    parser.add_argument("--spr-max", type=float, default=2.0)
     parser.add_argument("--max-uncertainty", type=float, default=0.5)
+    parser.add_argument("--energy-norm-den", type=float, default=250.0)
+    parser.add_argument("--beam-mask-rel-thr", type=float, default=0.05)
 
     args = parser.parse_args()
 
@@ -312,6 +321,8 @@ def main() -> None:
         dose_stem=args.dose_stem,
         spr_max=args.spr_max,
         max_uncertainty=args.max_uncertainty,
+        energy_norm_den=args.energy_norm_den,
+        beam_mask_rel_thr=args.beam_mask_rel_thr,
     )
 
     # Escribe resultado a JSON (para agregador)
