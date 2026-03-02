@@ -131,9 +131,15 @@ def qc_pair(
     return QcResult(True, "ok", low_u, high_u)
 
 
-def normalize_doses_global(low: np.ndarray, high: np.ndarray, scale: float) -> tuple[np.ndarray, np.ndarray]:
+def normalize_doses_global(
+    low: np.ndarray,
+    high: np.ndarray,
+    scale: float,
+    low_scale_factor: float = 1.0,
+) -> tuple[np.ndarray, np.ndarray]:
     eps = 1e-8
-    return (low / (scale + eps)).astype(np.float32), (high / (scale + eps)).astype(np.float32)
+    low_scaled = low * max(float(low_scale_factor), eps)
+    return (low_scaled / (scale + eps)).astype(np.float32), (high / (scale + eps)).astype(np.float32)
 
 
 def build_beam_mask(low_dose_norm: np.ndarray, rel_threshold: float) -> np.ndarray:
@@ -190,11 +196,13 @@ def main() -> None:
     parser.add_argument("--split-summary", type=Path, default=Path("data/training_npz/split_summary.json"))
     parser.add_argument("--hu-spr-json", type=Path, default=Path("configs/hu_spr_schneider_v1.json"))
     parser.add_argument("--dose-stem", type=str, default="dose_voxelized_ct_edep")
+    parser.add_argument("--low-scale-factor", type=float, default=200.0, help="Escala físico para dosis low (p.ej. 1e6/5e3 = 200)")
+    parser.add_argument("--target-dose-max", type=float, default=10.0, help="Máximo objetivo aproximado tras normalización cuando --dose-norm-const <= 0")
     parser.add_argument("--max-uncertainty", type=float, default=0.10)
     parser.add_argument("--spr-max", type=float, default=2.0)
     parser.add_argument("--energy-norm-den", type=float, default=250.0)
     parser.add_argument("--beam-mask-rel-thr", type=float, default=0.05)
-    parser.add_argument("--dose-norm-const", type=float, default=0.0, help="Si <=0 se estima global con p99 de máximos high")
+    parser.add_argument("--dose-norm-const", type=float, default=0.0, help="Si <=0 usa escala automática por par para llevar dosis a ~target-dose-max")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--train-patients", type=int, default=40)
     parser.add_argument("--val-patients", type=int, default=6)
@@ -217,17 +225,20 @@ def main() -> None:
     qc_rows: list[dict[str, str]] = []
     manifest_rows: list[dict[str, str]] = []
     
-    if args.dose_norm_const > 0:
-        dose_scale = float(args.dose_norm_const)
-    else:
-        dose_scale = 1.0
+    use_fixed_scale = args.dose_norm_const > 0
+    dose_scale = float(args.dose_norm_const) if use_fixed_scale else 0.0
     
     # DEBUG: Print dose_scale to verify it's being used
     print(f"\n{'='*70}")
     print(f"DOSE NORMALIZATION CONFIGURATION")
     print(f"{'='*70}")
     print(f"  dose_norm_const parameter: {args.dose_norm_const}")
-    print(f"  dose_scale being used: {dose_scale:.6f}")
+    print(f"  low_scale_factor (físico): {args.low_scale_factor}")
+    print(f"  target_dose_max: {args.target_dose_max}")
+    if use_fixed_scale:
+        print(f"  dose_scale fijo: {dose_scale:.6f}")
+    else:
+        print("  dose_scale: automático por par (max(low*factor, high)/target_dose_max)")
     print(f"  Output directory: {args.out_dir}")
     print(f"{'='*70}\n")
 
@@ -339,11 +350,23 @@ def main() -> None:
         spr = hu_to_spr(hu, hu_points, spr_points)
         spacing_mm = tuple(float(x) for x in low_img.GetSpacing()[::-1])
 
-        low_n, high_n = normalize_doses_global(low, high, dose_scale)
+        if use_fixed_scale:
+            pair_scale = dose_scale
+        else:
+            target_max = max(float(args.target_dose_max), 1e-6)
+            pair_peak = max(float(np.max(high)), float(np.max(low) * args.low_scale_factor))
+            pair_scale = max(pair_peak / target_max, 1e-6)
+
+        low_n, high_n = normalize_doses_global(
+            low,
+            high,
+            pair_scale,
+            low_scale_factor=args.low_scale_factor,
+        )
         
         # DEBUG: Print before/after normalization EVERY TIME
         if i == 1 or i % 100 == 0:
-            print(f"\nDEBUG [{i}]: dose_scale={dose_scale:.1f}")
+            print(f"\nDEBUG [{i}]: dose_scale={pair_scale:.3f}")
             print(f"  Before norm:  low_max={np.max(low):.2f}, high_max={np.max(high):.2f}")
             print(f"  After norm:   low_max={np.max(low_n):.2f}, high_max={np.max(high_n):.2f}")
         
@@ -367,12 +390,12 @@ def main() -> None:
         # VERIFY: Check that normalization was applied correctly
         verify_case = load_case_npz(npz_path)
         high_max = float(np.max(verify_case.d_high))
-        if high_max > 500 and dose_scale > 10:
+        if high_max > (args.target_dose_max * 5.0):
             # High dose values but large dose_scale → something went wrong
-            print(f"❌ WARNING: {npz_path.name} has d_high_max={high_max:.2f} (dose_scale={dose_scale}, expected max ~{np.max(case.d_high)/dose_scale:.2f})")
+            print(f"❌ WARNING: {npz_path.name} has d_high_max={high_max:.2f} (dose_scale={pair_scale:.3f}, target≈{args.target_dose_max})")
         elif i == 1:
             # Print first one as sanity check
-            print(f"✓ Sample: {npz_path.name} d_high_max={high_max:.2f} (dose_scale={dose_scale})")
+            print(f"✓ Sample: {npz_path.name} d_high_max={high_max:.2f} (dose_scale={pair_scale:.3f})")
 
         qc_rows.append({
             "pair_idx": str(pair.pair_idx),

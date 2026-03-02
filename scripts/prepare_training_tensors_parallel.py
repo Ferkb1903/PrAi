@@ -122,12 +122,15 @@ def hu_to_spr(hu: np.ndarray, hu_points: np.ndarray, spr_points: np.ndarray) -> 
 
 
 def normalize_doses_global(
-    low: np.ndarray, high: np.ndarray, dose_scale: float
+    low: np.ndarray,
+    high: np.ndarray,
+    dose_scale: float,
+    low_scale_factor: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Normaliza dosis con factor global"""
-    if dose_scale <= 0:
-        dose_scale = 1.0
-    return low / dose_scale, high / dose_scale
+    """Normaliza dosis con factor global y escala física opcional para low."""
+    eps = 1e-8
+    low_scaled = low * max(float(low_scale_factor), eps)
+    return low_scaled / (dose_scale + eps), high / (dose_scale + eps)
 
 
 def build_beam_mask(low_dose_norm: np.ndarray, rel_threshold: float) -> np.ndarray:
@@ -169,6 +172,8 @@ def process_single_pair(
     hu_points: np.ndarray,
     spr_points: np.ndarray,
     dose_scale: float,
+    low_scale_factor: float = 200.0,
+    target_dose_max: float = 10.0,
     dose_stem: str = "dose_voxelized_ct_edep",
     spr_max: float = 2.0,
     max_uncertainty: float = 0.5,
@@ -255,7 +260,19 @@ def process_single_pair(
     spacing_mm = tuple(float(x) for x in low_img.GetSpacing()[::-1])
 
     # Normaliza dosis
-    low_n, high_n = normalize_doses_global(low, high, dose_scale)
+    if dose_scale > 0:
+        pair_scale = dose_scale
+    else:
+        target_max = max(float(target_dose_max), 1e-6)
+        pair_peak = max(float(np.max(high)), float(np.max(low) * low_scale_factor))
+        pair_scale = max(pair_peak / target_max, 1e-6)
+
+    low_n, high_n = normalize_doses_global(
+        low,
+        high,
+        pair_scale,
+        low_scale_factor=low_scale_factor,
+    )
     spr_n = np.clip(spr, 0.0, spr_max) / max(spr_max, 1e-6)
 
     beam_mask = build_beam_mask(low_n, beam_mask_rel_thr)
@@ -301,7 +318,9 @@ def main() -> None:
     parser.add_argument("--out-dir", type=Path, default=Path("data/training_npz/spot_campaign_v2_low5k"))
     parser.add_argument("--hu-spr-json", type=Path, default=Path("configs/hu_spr_schneider_v1.json"))
     parser.add_argument("--dose-stem", default="dose_voxelized_ct_edep")
-    parser.add_argument("--dose-norm-const", type=float, default=1.0)
+    parser.add_argument("--dose-norm-const", type=float, default=0.0)
+    parser.add_argument("--low-scale-factor", type=float, default=200.0, help="Escala físico para dosis low (p.ej. 1e6/5e3 = 200)")
+    parser.add_argument("--target-dose-max", type=float, default=10.0, help="Máximo objetivo aproximado tras normalización cuando --dose-norm-const <= 0")
     parser.add_argument("--spr-max", type=float, default=2.0)
     parser.add_argument("--max-uncertainty", type=float, default=0.5)
     parser.add_argument("--energy-norm-den", type=float, default=250.0)
@@ -321,7 +340,7 @@ def main() -> None:
     # Carga tabla HU→SPR
     hu_points, spr_points = load_hu_spr_points(args.hu_spr_json)
 
-    dose_scale = float(args.dose_norm_const) if args.dose_norm_const > 0 else 1.0
+    dose_scale = float(args.dose_norm_const)
 
     # Procesa el pair
     result = process_single_pair(
@@ -330,6 +349,8 @@ def main() -> None:
         hu_points=hu_points,
         spr_points=spr_points,
         dose_scale=dose_scale,
+        low_scale_factor=args.low_scale_factor,
+        target_dose_max=args.target_dose_max,
         dose_stem=args.dose_stem,
         spr_max=args.spr_max,
         max_uncertainty=args.max_uncertainty,

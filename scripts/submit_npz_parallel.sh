@@ -1,13 +1,15 @@
 #!/bin/bash
 # Procesa tensores NPZ en paralelo con Slurm @ 200 concurrencia
-# Uso: bash scripts/submit_npz_parallel.sh [pair_index] [out_dir] [dose_norm] [dose_stem]
+# Uso: bash scripts/submit_npz_parallel.sh [pair_index] [out_dir] [dose_norm] [dose_stem] [low_scale_factor] [target_dose_max]
 
 set -e
 
 PAIR_INDEX_FILE="${1:-data/training_npz/pair_index_low5k.csv}"
 OUT_DIR="${2:-data/training_npz/spot_campaign_v2_low5k}"
-DOSE_NORM="${3:-1.0}"
+DOSE_NORM="${3:-0.0}"
 DOSE_STEM="${4:-dose_voxelized_ct_edep}"
+LOW_SCALE_FACTOR="${5:-200.0}"
+TARGET_DOSE_MAX="${6:-10.0}"
 
 # Validación
 if [[ ! -f "$PAIR_INDEX_FILE" ]]; then
@@ -37,6 +39,8 @@ echo "Total pairs: $N_PAIRS"
 echo "Output dir: $OUT_DIR"
 echo "Max concurrency: 200"
 echo "Dose stem: $DOSE_STEM"
+echo "Low scale factor: $LOW_SCALE_FACTOR"
+echo "Target dose max: $TARGET_DOSE_MAX"
 echo "=========================================="
 echo ""
 
@@ -65,7 +69,7 @@ for OFFSET in $(seq 0 "$MAX_ARRAY_SIZE" $((N_PAIRS - 1))); do
         --job-name="npz_parallel" \
         --output="$LOGS_DIR/job_%A_%a.log" \
         --error="$LOGS_DIR/job_%A_%a.err" \
-        --export="PAIR_INDEX_FILE=$PAIR_INDEX_ABS,OUT_DIR=$OUT_DIR_ABS,DOSE_NORM=$DOSE_NORM,DOSE_STEM=$DOSE_STEM,PAIR_OFFSET=$OFFSET" \
+        --export="PAIR_INDEX_FILE=$PAIR_INDEX_ABS,OUT_DIR=$OUT_DIR_ABS,DOSE_NORM=$DOSE_NORM,DOSE_STEM=$DOSE_STEM,PAIR_OFFSET=$OFFSET,LOW_SCALE_FACTOR=$LOW_SCALE_FACTOR,TARGET_DOSE_MAX=$TARGET_DOSE_MAX" \
         scripts/slurm_worker_npz.sh
     )
 

@@ -155,8 +155,11 @@ def run_epoch(
     device: torch.device,
     scaler: torch.amp.GradScaler | None,
     desc: str = "",
+    model_outputs_delta: bool = True,
     exp_loss_alpha: float = 0.0,
     exp_loss_max_weight: float = 10.0,
+    voxel_weight_mode: str = "none",
+    voxel_weight_alpha: float = 3.0,
     use_beam_mask: bool = True,
 ) -> dict[str, float]:
     is_train = optimizer is not None
@@ -185,12 +188,18 @@ def run_epoch(
             try:
                 # Use BF16 for forward/backward (faster, safe on ROCm)
                 with torch.amp.autocast(device_type=device.type, enabled=autocast_enabled, dtype=torch.bfloat16):
-                    delta = model(x)
-                    pred = d_low + delta
+                    model_out = model(x)
+                    pred = d_low + model_out if model_outputs_delta else model_out
                     diff = torch.abs(pred - target)
                     weights = beam_mask.to(diff.dtype)
 
-                    if exp_loss_alpha > 0.0:
+                    if voxel_weight_mode == "paper_exp" and voxel_weight_alpha > 0.0:
+                        target_max = torch.clamp(torch.amax(target, dim=(2, 3, 4), keepdim=True), min=1e-6)
+                        mean_pred_target = 0.5 * (pred + target)
+                        ratio = torch.clamp(mean_pred_target / target_max, min=0.0, max=1.0)
+                        exp_w = torch.exp(-voxel_weight_alpha * (1.0 - ratio))
+                        weights = weights * exp_w
+                    elif voxel_weight_mode == "legacy_exp_target" and exp_loss_alpha > 0.0:
                         norm_target = target / torch.clamp(target.abs().max(), min=1e-3)
                         exp_w = torch.exp(exp_loss_alpha * norm_target)
                         if exp_loss_max_weight > 0:
@@ -222,7 +231,7 @@ def run_epoch(
             if torch.isnan(loss):
                 nan_batches += 1
                 print(f"\n[WARNING] NaN detected in batch {n_batches + 1}")
-                print(f"  delta range: [{delta.min():.4f}, {delta.max():.4f}]")
+                print(f"  model_out range: [{model_out.min():.4f}, {model_out.max():.4f}]")
                 print(f"  pred range:  [{pred.min():.4f}, {pred.max():.4f}]")
                 print(f"  target range: [{target.min():.4f}, {target.max():.4f}]")
                 if nan_batches > 5:
@@ -262,8 +271,11 @@ def evaluate(
     model: nn.Module,
     loader: DataLoader,
     device: torch.device,
+    model_outputs_delta: bool = True,
     exp_loss_alpha: float = 0.0,
     exp_loss_max_weight: float = 10.0,
+    voxel_weight_mode: str = "none",
+    voxel_weight_alpha: float = 3.0,
     use_beam_mask: bool = True,
     desc: str = "Eval",
 ) -> dict[str, float]:
@@ -275,8 +287,11 @@ def evaluate(
             device,
             None,
             desc=desc,
+            model_outputs_delta=model_outputs_delta,
             exp_loss_alpha=exp_loss_alpha,
             exp_loss_max_weight=exp_loss_max_weight,
+            voxel_weight_mode=voxel_weight_mode,
+            voxel_weight_alpha=voxel_weight_alpha,
             use_beam_mask=use_beam_mask,
         )
 
@@ -295,11 +310,14 @@ def main() -> None:
     parser.add_argument("--lr-gamma", type=float, default=0.97, help="Gamma for exp scheduler")
     parser.add_argument("--weight-decay", type=float, default=1e-5)
     parser.add_argument("--base-channels", type=int, default=24)
+    parser.add_argument("--model-variant", type=str, choices=["resunet_delta", "resunet_direct"], default="resunet_delta", help="resunet_delta: el modelo predice delta; resunet_direct: el modelo predice dosis final")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--no-bev-crop", action="store_true")
     parser.add_argument("--crop-size", type=str, default="96,96,96")
     parser.add_argument("--exp-loss-alpha", type=float, default=0.0, help="Exponential voxel weighting (0 disables)")
     parser.add_argument("--exp-loss-max-weight", type=float, default=25.0, help="Clip for exponential loss weights (<=0 disables)")
+    parser.add_argument("--voxel-weight-mode", type=str, choices=["none", "legacy_exp_target", "paper_exp"], default="none", help="Modo de ponderación voxel-wise")
+    parser.add_argument("--voxel-weight-alpha", type=float, default=3.0, help="Alpha para paper_exp: exp(-alpha*(1-0.5*(yhat+y)/max(y)))")
     parser.add_argument("--no-loss-beam-mask", action="store_true", help="No beam-mask weighting (use full volume)")
     parser.add_argument("--use-se-blocks", action="store_true", help="Enable SE attention blocks")
     parser.add_argument("--se-reduction", type=int, default=8, help="Channel reduction for SE blocks")
@@ -355,10 +373,14 @@ def main() -> None:
         )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if args.voxel_weight_mode == "none" and args.exp_loss_alpha > 0:
+        args.voxel_weight_mode = "legacy_exp_target"
+
+    model_outputs_delta = args.model_variant == "resunet_delta"
     model = ResidualUNet3D(
         in_channels=4,
         base_channels=args.base_channels,
-        residual=True,
+        residual=model_outputs_delta,
         use_se=args.use_se_blocks,
         se_reduction=args.se_reduction,
     ).to(device)
@@ -425,16 +447,22 @@ def main() -> None:
                 device,
                 scaler,
                 desc=f"Epoch {epoch:03d}/Train",
+                model_outputs_delta=model_outputs_delta,
                 exp_loss_alpha=args.exp_loss_alpha,
                 exp_loss_max_weight=args.exp_loss_max_weight,
+                voxel_weight_mode=args.voxel_weight_mode,
+                voxel_weight_alpha=args.voxel_weight_alpha,
                 use_beam_mask=not args.no_loss_beam_mask,
             )
             val_metrics = evaluate(
                 model,
                 val_loader,
                 device,
+                model_outputs_delta=model_outputs_delta,
                 exp_loss_alpha=args.exp_loss_alpha,
                 exp_loss_max_weight=args.exp_loss_max_weight,
+                voxel_weight_mode=args.voxel_weight_mode,
+                voxel_weight_alpha=args.voxel_weight_alpha,
                 use_beam_mask=not args.no_loss_beam_mask,
                 desc=f"Epoch {epoch:03d}/Val",
             )
@@ -510,8 +538,11 @@ def main() -> None:
             model,
             test_loader,
             device,
+            model_outputs_delta=model_outputs_delta,
             exp_loss_alpha=args.exp_loss_alpha,
             exp_loss_max_weight=args.exp_loss_max_weight,
+            voxel_weight_mode=args.voxel_weight_mode,
+            voxel_weight_alpha=args.voxel_weight_alpha,
             use_beam_mask=not args.no_loss_beam_mask,
             desc="Test",
         )
