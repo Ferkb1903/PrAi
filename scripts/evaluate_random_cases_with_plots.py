@@ -84,6 +84,22 @@ def gamma_1d(
     return gamma, pass_rate
 
 
+def parse_offsets_mm(raw: str) -> list[float]:
+    values = [float(token.strip()) for token in raw.split(",") if token.strip()]
+    if not values:
+        return [0.0, 2.5, 5.0]
+    return values
+
+
+def extract_oriented_slice(volume: np.ndarray, fixed_axis: int, fixed_index: int, ray_axis: int) -> np.ndarray:
+    plane = np.take(volume, indices=fixed_index, axis=fixed_axis)
+    remaining_axes = [axis for axis in range(3) if axis != fixed_axis]
+    ray_pos = remaining_axes.index(ray_axis)
+    if ray_pos != 0:
+        plane = np.moveaxis(plane, ray_pos, 0)
+    return plane
+
+
 def build_model_from_checkpoint(checkpoint: dict, device: torch.device) -> tuple[ResidualUNet3D, str]:
     ckpt_args = checkpoint.get("args", {}) if isinstance(checkpoint, dict) else {}
     base_channels = int(ckpt_args.get("base_channels", 24))
@@ -113,6 +129,8 @@ def main() -> None:
     parser.add_argument("--dose-percent", type=float, default=3.0)
     parser.add_argument("--dta-mm", type=float, default=3.0)
     parser.add_argument("--disable-beam-mask", action="store_true")
+    parser.add_argument("--with-beamlet-style", action="store_true", help="Genera panel estilo CT/Low/High/Pred con cortes center y off-center")
+    parser.add_argument("--offsets-mm", type=str, default="0,2.5,5", help="Offsets en mm para cortes off-center (ej: 0,2.5,5)")
     args = parser.parse_args()
 
     if not args.manifest.exists():
@@ -168,6 +186,7 @@ def main() -> None:
     print(f"Evaluating random cases: {sample_count}")
 
     case_rows: list[dict] = []
+    offsets_mm = parse_offsets_mm(args.offsets_mm)
 
     for case_idx, npz_path in enumerate(selected_paths, start=1):
         case = load_case_npz(npz_path)
@@ -198,7 +217,7 @@ def main() -> None:
         depth_mm = np.arange(high_depth.shape[0]) * float(spacing_mm[ray_axis])
         norm = max(float(np.max(high_depth)), 1e-8)
 
-        fig, axes = plt.subplots(len(models), 2, figsize=(12, max(4, 4 * len(models))), dpi=140, squeeze=False)
+        per_model_results: list[dict] = []
 
         for model_idx, model_item in enumerate(models):
             model = model_item["model"]
@@ -222,35 +241,48 @@ def main() -> None:
 
             l1_depth = float(np.mean(np.abs(pred_depth - high_depth)))
 
-            case_rows.append(
+            metric_row = {
+                "case_index": case_idx,
+                "npz_path": str(npz_path),
+                "checkpoint": str(model_item["path"]),
+                "checkpoint_name": model_item["name"],
+                "model_variant": variant,
+                "ray_axis": ray_axis,
+                "spacing_mm_axis": float(spacing_mm[ray_axis]),
+                "gamma_pass_rate": gamma_pass,
+                "gamma_mean": float(np.mean(gamma_vals)),
+                "gamma_max": float(np.max(gamma_vals)),
+                "depth_l1": l1_depth,
+            }
+            case_rows.append(metric_row)
+
+            per_model_results.append(
                 {
-                    "case_index": case_idx,
-                    "npz_path": str(npz_path),
-                    "checkpoint": str(model_item["path"]),
-                    "checkpoint_name": model_item["name"],
-                    "model_variant": variant,
-                    "ray_axis": ray_axis,
-                    "spacing_mm_axis": float(spacing_mm[ray_axis]),
-                    "gamma_pass_rate": gamma_pass,
-                    "gamma_mean": float(np.mean(gamma_vals)),
-                    "gamma_max": float(np.max(gamma_vals)),
-                    "depth_l1": l1_depth,
+                    "metric_row": metric_row,
+                    "model_name": model_item["name"],
+                    "variant": variant,
+                    "pred_scaled": pred_scaled,
+                    "pred_depth": pred_depth,
+                    "gamma_vals": gamma_vals,
+                    "gamma_pass": gamma_pass,
                 }
             )
 
+        fig, axes = plt.subplots(len(models), 2, figsize=(12, max(4, 4 * len(models))), dpi=140, squeeze=False)
+        for model_idx, model_result in enumerate(per_model_results):
             ax0 = axes[model_idx, 0]
-            ax0.plot(depth_mm, low_depth / norm, label="low*200", lw=1.2)
+            ax0.plot(depth_mm, low_depth / norm, label=f"low*{args.low_scale_factor:g}", lw=1.2)
             ax0.plot(depth_mm, high_depth / norm, label="high", lw=2.0)
-            ax0.plot(depth_mm, pred_depth / norm, label="pred*200", lw=1.6)
+            ax0.plot(depth_mm, model_result["pred_depth"] / norm, label=f"pred*{args.low_scale_factor:g}", lw=1.6)
             ax0.set_ylabel("Norm dose")
-            ax0.set_title(f"{model_item['name']} | axis={ray_axis}")
+            ax0.set_title(f"{model_result['model_name']} | axis={ray_axis}")
             ax0.grid(alpha=0.25)
             ax0.legend(fontsize=7)
 
             ax1 = axes[model_idx, 1]
-            ax1.plot(depth_mm, gamma_vals, color="tab:purple", lw=1.4, label="gamma")
+            ax1.plot(depth_mm, model_result["gamma_vals"], color="tab:purple", lw=1.4, label="gamma")
             ax1.axhline(1.0, color="tab:red", ls="--", lw=1.1, label="pass")
-            ax1.set_title(f"Gamma pass: {gamma_pass:.2f}%")
+            ax1.set_title(f"Gamma pass: {model_result['gamma_pass']:.2f}%")
             ax1.set_ylabel("Gamma")
             ax1.grid(alpha=0.25)
             ax1.legend(fontsize=7)
@@ -263,6 +295,72 @@ def main() -> None:
         plot_path = plots_dir / f"case_{case_idx:02d}_{npz_path.stem}_depth_gamma.png"
         fig.savefig(plot_path, bbox_inches="tight")
         plt.close(fig)
+
+        if args.with_beamlet_style:
+            coords = np.argwhere(beam_mask > 0.5)
+            transverse_axes = [axis for axis in range(3) if axis != ray_axis]
+            if coords.shape[0] >= 10:
+                mins = coords.min(axis=0)
+                maxs = coords.max(axis=0)
+                ext_mm = (maxs - mins + 1).astype(np.float64) * spacing_mm.astype(np.float64)
+                shift_axis = max(transverse_axes, key=lambda axis: ext_mm[axis])
+                center_index = int(round(float(np.mean(coords[:, shift_axis]))))
+            else:
+                shift_axis = transverse_axes[0]
+                center_index = d_low.shape[shift_axis] // 2
+
+            if len(transverse_axes) == 1:
+                inplane_axis = transverse_axes[0]
+            else:
+                inplane_axis = transverse_axes[0] if transverse_axes[1] == shift_axis else transverse_axes[1]
+
+            spr_min = float(np.percentile(spr, 5))
+            spr_max = float(np.percentile(spr, 95))
+
+            for model_result in per_model_results:
+                pred_scaled = model_result["pred_scaled"]
+                safe_model_name = model_result["model_name"].replace("/", "_")
+
+                fig2, axes2 = plt.subplots(len(offsets_mm), 4, figsize=(14, 3.4 * len(offsets_mm)), dpi=140, squeeze=False)
+                fig2.suptitle(
+                    f"Case {case_idx:02d} | {npz_path.name} | model={model_result['model_name']} | ray axis={ray_axis}",
+                    fontsize=10,
+                )
+
+                for row_idx, offset_mm in enumerate(offsets_mm):
+                    shift_vox = int(round(offset_mm / max(float(spacing_mm[shift_axis]), 1e-6)))
+                    slice_index = int(np.clip(center_index + shift_vox, 0, d_low.shape[shift_axis] - 1))
+
+                    spr_slice = extract_oriented_slice(spr, shift_axis, slice_index, ray_axis)
+                    low_slice = extract_oriented_slice(low_scaled, shift_axis, slice_index, ray_axis)
+                    high_slice = extract_oriented_slice(high_ref, shift_axis, slice_index, ray_axis)
+                    pred_slice = extract_oriented_slice(pred_scaled, shift_axis, slice_index, ray_axis)
+
+                    dose_stack = np.concatenate([low_slice.ravel(), high_slice.ravel(), pred_slice.ravel()])
+                    dose_max = float(np.percentile(dose_stack, 99.5)) if np.any(np.isfinite(dose_stack)) else 1.0
+                    dose_max = max(dose_max, 1e-6)
+
+                    panels = [spr_slice, low_slice, high_slice, pred_slice]
+                    titles = ["Material Density (SPR)", "Low Noise", "High Noise", "Prediction"]
+
+                    for col_idx, (panel, title) in enumerate(zip(panels, titles)):
+                        ax = axes2[row_idx, col_idx]
+                        if col_idx == 0:
+                            im = ax.imshow(panel, cmap="gray", vmin=spr_min, vmax=spr_max, origin="lower", aspect="auto")
+                        else:
+                            im = ax.imshow(panel, cmap="viridis", vmin=0.0, vmax=dose_max, origin="lower", aspect="auto")
+                        if row_idx == 0:
+                            ax.set_title(title, fontsize=9)
+                        if col_idx == 0:
+                            label = "Beamlet Center" if abs(offset_mm) < 1e-6 else f"{offset_mm:g}mm Off-Center"
+                            ax.set_ylabel(label, fontsize=9)
+                        ax.set_xticks([])
+                        ax.set_yticks([])
+
+                fig2.tight_layout()
+                beamlet_plot = plots_dir / f"case_{case_idx:02d}_{npz_path.stem}_{safe_model_name}_beamlet_style.png"
+                fig2.savefig(beamlet_plot, bbox_inches="tight")
+                plt.close(fig2)
 
         print(f"[{case_idx:02d}/{sample_count}] {npz_path.name} -> {plot_path.name}")
 
