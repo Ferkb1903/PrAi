@@ -317,50 +317,62 @@ def main() -> None:
             spr_min = float(np.percentile(spr, 5))
             spr_max = float(np.percentile(spr, 95))
 
-            for model_result in per_model_results:
-                pred_scaled = model_result["pred_scaled"]
-                safe_model_name = model_result["model_name"].replace("/", "_")
+            num_cols = 3 + len(per_model_results)
+            fig2, axes2 = plt.subplots(
+                len(offsets_mm),
+                num_cols,
+                figsize=(3.2 * num_cols, 3.4 * len(offsets_mm)),
+                dpi=140,
+                squeeze=False,
+            )
+            fig2.suptitle(
+                f"Case {case_idx:02d} | {npz_path.name} | ray axis={ray_axis}",
+                fontsize=10,
+            )
 
-                fig2, axes2 = plt.subplots(len(offsets_mm), 4, figsize=(14, 3.4 * len(offsets_mm)), dpi=140, squeeze=False)
-                fig2.suptitle(
-                    f"Case {case_idx:02d} | {npz_path.name} | model={model_result['model_name']} | ray axis={ray_axis}",
-                    fontsize=10,
-                )
+            for row_idx, offset_mm in enumerate(offsets_mm):
+                shift_vox = int(round(offset_mm / max(float(spacing_mm[shift_axis]), 1e-6)))
+                slice_index = int(np.clip(center_index + shift_vox, 0, d_low.shape[shift_axis] - 1))
 
-                for row_idx, offset_mm in enumerate(offsets_mm):
-                    shift_vox = int(round(offset_mm / max(float(spacing_mm[shift_axis]), 1e-6)))
-                    slice_index = int(np.clip(center_index + shift_vox, 0, d_low.shape[shift_axis] - 1))
+                spr_slice = extract_oriented_slice(spr, shift_axis, slice_index, ray_axis)
+                low_slice = extract_oriented_slice(low_scaled, shift_axis, slice_index, ray_axis)
+                high_slice = extract_oriented_slice(high_ref, shift_axis, slice_index, ray_axis)
+                pred_slices = [
+                    extract_oriented_slice(model_result["pred_scaled"], shift_axis, slice_index, ray_axis)
+                    for model_result in per_model_results
+                ]
 
-                    spr_slice = extract_oriented_slice(spr, shift_axis, slice_index, ray_axis)
-                    low_slice = extract_oriented_slice(low_scaled, shift_axis, slice_index, ray_axis)
-                    high_slice = extract_oriented_slice(high_ref, shift_axis, slice_index, ray_axis)
-                    pred_slice = extract_oriented_slice(pred_scaled, shift_axis, slice_index, ray_axis)
+                dose_arrays = [low_slice, high_slice] + pred_slices
+                dose_stack = np.concatenate([array.ravel() for array in dose_arrays])
+                dose_max = float(np.percentile(dose_stack, 99.5)) if np.any(np.isfinite(dose_stack)) else 1.0
+                dose_max = max(dose_max, 1e-6)
 
-                    dose_stack = np.concatenate([low_slice.ravel(), high_slice.ravel(), pred_slice.ravel()])
-                    dose_max = float(np.percentile(dose_stack, 99.5)) if np.any(np.isfinite(dose_stack)) else 1.0
-                    dose_max = max(dose_max, 1e-6)
+                panels = [spr_slice, low_slice, high_slice] + pred_slices
+                titles = ["Material Density (SPR)", "Low Noise", "High Noise"] + [
+                    f"Pred: {model_result['model_name']}"
+                    for model_result in per_model_results
+                ]
 
-                    panels = [spr_slice, low_slice, high_slice, pred_slice]
-                    titles = ["Material Density (SPR)", "Low Noise", "High Noise", "Prediction"]
+                for col_idx, (panel, title) in enumerate(zip(panels, titles)):
+                    ax = axes2[row_idx, col_idx]
+                    if col_idx == 0:
+                        ax.imshow(panel, cmap="gray", vmin=spr_min, vmax=spr_max, origin="lower", aspect="auto")
+                    else:
+                        ax.imshow(panel, cmap="viridis", vmin=0.0, vmax=dose_max, origin="lower", aspect="auto")
 
-                    for col_idx, (panel, title) in enumerate(zip(panels, titles)):
-                        ax = axes2[row_idx, col_idx]
-                        if col_idx == 0:
-                            im = ax.imshow(panel, cmap="gray", vmin=spr_min, vmax=spr_max, origin="lower", aspect="auto")
-                        else:
-                            im = ax.imshow(panel, cmap="viridis", vmin=0.0, vmax=dose_max, origin="lower", aspect="auto")
-                        if row_idx == 0:
-                            ax.set_title(title, fontsize=9)
-                        if col_idx == 0:
-                            label = "Beamlet Center" if abs(offset_mm) < 1e-6 else f"{offset_mm:g}mm Off-Center"
-                            ax.set_ylabel(label, fontsize=9)
-                        ax.set_xticks([])
-                        ax.set_yticks([])
+                    if row_idx == 0:
+                        ax.set_title(title, fontsize=9)
+                    if col_idx == 0:
+                        label = "Beamlet Center" if abs(offset_mm) < 1e-6 else f"{offset_mm:g}mm Off-Center"
+                        ax.set_ylabel(label, fontsize=9)
 
-                fig2.tight_layout()
-                beamlet_plot = plots_dir / f"case_{case_idx:02d}_{npz_path.stem}_{safe_model_name}_beamlet_style.png"
-                fig2.savefig(beamlet_plot, bbox_inches="tight")
-                plt.close(fig2)
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+
+            fig2.tight_layout()
+            beamlet_plot = plots_dir / f"case_{case_idx:02d}_{npz_path.stem}_beamlet_style_multi_model.png"
+            fig2.savefig(beamlet_plot, bbox_inches="tight")
+            plt.close(fig2)
 
         print(f"[{case_idx:02d}/{sample_count}] {npz_path.name} -> {plot_path.name}")
 
