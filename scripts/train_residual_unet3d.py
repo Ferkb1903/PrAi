@@ -21,7 +21,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data.io_npz import load_case_npz
-from src.data.preprocess import maybe_crop_bev
+from src.data.preprocess import maybe_crop_bev, normalize_dose_local
 from src.model.resunet3d import ResidualUNet3D
 
 
@@ -43,12 +43,19 @@ def ensure_safe_runtime_dirs() -> None:
 
 
 class ManifestNPZDataset(Dataset):
-    def __init__(self, manifest_csv: Path, use_bev_crop: bool = True, crop_size: tuple[int, int, int] = (96, 96, 96)) -> None:
+    def __init__(
+        self,
+        manifest_csv: Path,
+        use_bev_crop: bool = True,
+        crop_size: tuple[int, int, int] = (96, 96, 96),
+        dose_norm_mode: str = "none",
+    ) -> None:
         rows = list(csv.DictReader(manifest_csv.open(encoding="utf-8")))
         self.paths = [Path(r["npz_path"]) for r in rows]
         self.manifest_dir = manifest_csv.parent.resolve()
         self.use_bev_crop = use_bev_crop
         self.crop_size = crop_size
+        self.dose_norm_mode = dose_norm_mode
         self.bad_paths_reported: set[Path] = set()
         if not self.paths:
             raise ValueError(f"Manifest vacío: {manifest_csv}")
@@ -132,6 +139,11 @@ class ManifestNPZDataset(Dataset):
         d_low = case.d_low
         spr = case.spr
         d_high = case.d_high
+
+        if self.dose_norm_mode == "local":
+            d_low = normalize_dose_local(d_low).astype(np.float32)
+            d_high = normalize_dose_local(d_high).astype(np.float32)
+
         beam_mask = case.beam_mask if case.beam_mask is not None else np.ones_like(d_low, dtype=np.float32)
 
         if self.use_bev_crop:
@@ -314,6 +326,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--no-bev-crop", action="store_true")
     parser.add_argument("--crop-size", type=str, default="96,96,96")
+    parser.add_argument("--dataset-dose-norm", type=str, choices=["none", "local"], default="none", help="Normalización de dosis en Dataset: none o local (max por muestra)")
     parser.add_argument("--exp-loss-alpha", type=float, default=0.0, help="Exponential voxel weighting (0 disables)")
     parser.add_argument("--exp-loss-max-weight", type=float, default=25.0, help="Clip for exponential loss weights (<=0 disables)")
     parser.add_argument("--voxel-weight-mode", type=str, choices=["none", "legacy_exp_target", "paper_exp"], default="none", help="Modo de ponderación voxel-wise")
@@ -343,11 +356,26 @@ def main() -> None:
         raise ValueError("--crop-size debe tener formato D,H,W")
     crop_size = (crop_tokens[0], crop_tokens[1], crop_tokens[2])
 
-    train_ds = ManifestNPZDataset(args.manifest_train, use_bev_crop=not args.no_bev_crop, crop_size=crop_size)
-    val_ds = ManifestNPZDataset(args.manifest_val, use_bev_crop=not args.no_bev_crop, crop_size=crop_size)
+    train_ds = ManifestNPZDataset(
+        args.manifest_train,
+        use_bev_crop=not args.no_bev_crop,
+        crop_size=crop_size,
+        dose_norm_mode=args.dataset_dose_norm,
+    )
+    val_ds = ManifestNPZDataset(
+        args.manifest_val,
+        use_bev_crop=not args.no_bev_crop,
+        crop_size=crop_size,
+        dose_norm_mode=args.dataset_dose_norm,
+    )
     test_ds = None
     if args.manifest_test is not None and args.manifest_test.exists():
-        test_ds = ManifestNPZDataset(args.manifest_test, use_bev_crop=not args.no_bev_crop, crop_size=crop_size)
+        test_ds = ManifestNPZDataset(
+            args.manifest_test,
+            use_bev_crop=not args.no_bev_crop,
+            crop_size=crop_size,
+            dose_norm_mode=args.dataset_dose_norm,
+        )
 
     train_loader = DataLoader(
         train_ds,
