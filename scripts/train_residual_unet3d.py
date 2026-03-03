@@ -325,6 +325,7 @@ def main() -> None:
     parser.add_argument("--save-every", type=int, default=1, help="Guardar checkpoint cada N épocas")
     parser.add_argument("--resume", type=Path, default=None, help="Ruta a checkpoint .pt para reanudar entrenamiento")
     parser.add_argument("--early-stop-patience", type=int, default=10, help="Detener si no mejora val por N épocas (<=0 desactiva)")
+    parser.add_argument("--selection-metric", type=str, choices=["val_l1", "val_baseline"], default="val_baseline", help="Métrica para seleccionar best checkpoint y early stopping")
     args = parser.parse_args()
 
     ensure_safe_runtime_dirs()
@@ -405,6 +406,8 @@ def main() -> None:
 
     start_epoch = 1
     best_val = float("inf")
+    best_val_baseline = float("inf")
+    best_selection_metric = float("inf")
     epochs_without_improvement = 0
 
     if args.resume is not None:
@@ -419,11 +422,20 @@ def main() -> None:
         resumed_epoch = int(checkpoint.get("epoch", 0))
         start_epoch = resumed_epoch + 1
         best_val = float(checkpoint.get("best_val_l1", float("inf")))
+        best_val_baseline = float(checkpoint.get("best_val_baseline", float("inf")))
+        best_selection_metric = float(
+            checkpoint.get(
+                "best_selection_metric",
+                checkpoint.get("best_val_l1", float("inf")) if args.selection_metric == "val_l1" else checkpoint.get("best_val_baseline", float("inf")),
+            )
+        )
         epochs_without_improvement = int(checkpoint.get("epochs_without_improvement", 0))
         run_dir = args.resume.parent
         print(f"[Resume] Checkpoint: {args.resume}")
         print(f"[Resume] Última época guardada: {resumed_epoch}; reanudando en época {start_epoch}")
         print(f"[Resume] best_val_l1 previo: {best_val:.6f}")
+        print(f"[Resume] best_val_baseline previo: {best_val_baseline:.6f}")
+        print(f"[Resume] selección por '{args.selection_metric}' con best={best_selection_metric:.6f}")
     else:
         run_dir = args.out_dir / datetime.now().strftime("%Y%m%d_%H%M%S")
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -492,8 +504,14 @@ def main() -> None:
             if scheduler is not None:
                 scheduler.step()
 
+            current_selection_metric = val_metrics["loss"] if args.selection_metric == "val_l1" else val_metrics["baseline_l1"]
             if val_metrics["loss"] < best_val:
                 best_val = val_metrics["loss"]
+            if val_metrics["baseline_l1"] < best_val_baseline:
+                best_val_baseline = val_metrics["baseline_l1"]
+
+            if current_selection_metric < best_selection_metric:
+                best_selection_metric = current_selection_metric
                 epochs_without_improvement = 0
                 torch.save(
                     {
@@ -502,6 +520,9 @@ def main() -> None:
                         "scheduler": scheduler.state_dict() if scheduler is not None else None,
                         "epoch": epoch,
                         "best_val_l1": best_val,
+                        "best_val_baseline": best_val_baseline,
+                        "best_selection_metric": best_selection_metric,
+                        "selection_metric_name": args.selection_metric,
                         "epochs_without_improvement": epochs_without_improvement,
                         "args": vars(args),
                     },
@@ -518,6 +539,9 @@ def main() -> None:
                         "scheduler": scheduler.state_dict() if scheduler is not None else None,
                         "epoch": epoch,
                         "best_val_l1": best_val,
+                        "best_val_baseline": best_val_baseline,
+                        "best_selection_metric": best_selection_metric,
+                        "selection_metric_name": args.selection_metric,
                         "epochs_without_improvement": epochs_without_improvement,
                         "args": vars(args),
                     },
@@ -556,6 +580,9 @@ def main() -> None:
             "scheduler": scheduler.state_dict() if scheduler is not None else None,
             "epoch": last_epoch_completed,
             "best_val_l1": best_val,
+            "best_val_baseline": best_val_baseline,
+            "best_selection_metric": best_selection_metric,
+            "selection_metric_name": args.selection_metric,
             "epochs_without_improvement": epochs_without_improvement,
             "test_l1": test_l1,
             "test_baseline": test_baseline,
@@ -566,6 +593,8 @@ def main() -> None:
 
     print(f"Run dir: {run_dir}")
     print(f"Best val L1: {best_val:.6f}")
+    print(f"Best val baseline: {best_val_baseline:.6f}")
+    print(f"Best selection metric ({args.selection_metric}): {best_selection_metric:.6f}")
     if test_l1 is not None:
         print(f"Test L1: {test_l1:.6f} (baseline={test_baseline:.6f})")
 
