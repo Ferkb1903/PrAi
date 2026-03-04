@@ -110,7 +110,7 @@ def gamma_3d_same_grid(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compare low-stat vs high-stat dose quality with quantitative metrics")
-    parser.add_argument("--npz-eval", type=Path, required=True, help="NPZ of evaluated/noisy dose (e.g., 5k)")
+    parser.add_argument("--npz-eval", type=Path, required=True, help="NPZ of evaluated/noisy dose (e.g., 2k)")
     parser.add_argument("--npz-ref", type=Path, default=None, help="NPZ of reference dose (e.g., 1M). If omitted, use same NPZ")
     parser.add_argument("--eval-key", type=str, default="d_low")
     parser.add_argument("--ref-key", type=str, default="d_high")
@@ -233,7 +233,7 @@ def main() -> None:
     trans_mm = np.arange(ref_line_t.shape[0]) * float(spacing[trans_axis])
 
     ax1[0].plot(depth_mm, ref_line, label="Ref (1M)", lw=2)
-    ax1[0].plot(depth_mm, eval_line, label="Eval (5k)", lw=1.6)
+    ax1[0].plot(depth_mm, eval_line, label="Eval (2k)", lw=1.6)
     ax1[0].set_title("Beam-axis profile")
     ax1[0].set_xlabel("Depth (mm)")
     ax1[0].set_ylabel("Dose")
@@ -241,7 +241,7 @@ def main() -> None:
     ax1[0].legend()
 
     ax1[1].plot(trans_mm, ref_line_t, label="Ref (1M)", lw=2)
-    ax1[1].plot(trans_mm, eval_line_t, label="Eval (5k)", lw=1.6)
+    ax1[1].plot(trans_mm, eval_line_t, label="Eval (2k)", lw=1.6)
     ax1[1].set_title("Transverse profile")
     ax1[1].set_xlabel("Distance (mm)")
     ax1[1].set_ylabel("Dose")

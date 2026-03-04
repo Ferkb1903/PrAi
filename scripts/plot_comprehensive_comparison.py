@@ -34,7 +34,7 @@ def plot_profiles_comparison(ref: np.ndarray, val: np.ndarray, pred: np.ndarray,
 
     z = np.arange(len(prof_ref)) * float(spacing[axis])
     axes[0].plot(z, prof_ref, "k-", linewidth=2.2, label="Ref (1M)")
-    axes[0].plot(z, prof_val, "b:", linewidth=2.0, label="Val (5k)")
+    axes[0].plot(z, prof_val, "b:", linewidth=2.0, label="Val (2k)")
     axes[0].plot(z, prof_pred, "r--", linewidth=2.0, label="Pred")
     axes[0].set_xlabel(f"Profundidad (mm, eje {axis})")
     axes[0].set_ylabel("Dosis (Gy)")
@@ -66,7 +66,7 @@ def plot_profiles_comparison(ref: np.ndarray, val: np.ndarray, pred: np.ndarray,
 
     x = np.arange(len(prof_trans_ref)) * float(spacing[lat_axis])
     axes[1].plot(x, prof_trans_ref, "k-", linewidth=2.2, label="Ref (1M)")
-    axes[1].plot(x, prof_trans_val, "b:", linewidth=2.0, label="Val (5k)")
+    axes[1].plot(x, prof_trans_val, "b:", linewidth=2.0, label="Val (2k)")
     axes[1].plot(x, prof_trans_pred, "r--", linewidth=2.0, label="Pred")
     axes[1].set_xlabel("Posición lateral (mm)")
     axes[1].set_ylabel("Dosis (Gy)")
@@ -85,7 +85,7 @@ def plot_dvh_comparison(ref: np.ndarray, val: np.ndarray, pred: np.ndarray, out_
 
     for d, label, style in [
         (ref, "Ref (1M)", "k-"),
-        (val, "Val (5k)", "b:"),
+        (val, "Val (2k)", "b:"),
         (pred, "Pred", "r--"),
     ]:
         dose_vals = np.sort(d.ravel())[::-1]
@@ -123,7 +123,7 @@ def plot_slices_comparison(ref: np.ndarray, val: np.ndarray, pred: np.ndarray, a
     plt.colorbar(im0, ax=axes[0], label="Gy")
 
     im1 = axes[1].imshow(sl_val, cmap="jet", vmin=vmin, vmax=vmax)
-    axes[1].set_title("Val (5k)")
+    axes[1].set_title("Val (2k)")
     plt.colorbar(im1, ax=axes[1], label="Gy")
 
     im2 = axes[2].imshow(sl_pred, cmap="jet", vmin=vmin, vmax=vmax)
@@ -166,9 +166,9 @@ def plot_gamma_comparison(ref: np.ndarray, val: np.ndarray, pred: np.ndarray, ou
 
     # Val vs Ref
     ax0.plot(z, prof_ref, "k-", linewidth=2.2, label="Ref (1M)")
-    ax0.plot(z, prof_val, "b:", linewidth=2.0, label="Val (5k)")
+    ax0.plot(z, prof_val, "b:", linewidth=2.0, label="Val (2k)")
     ax0.set_ylabel("Dosis (Gy)")
-    ax0.set_title("Val (5k) vs Ref (1M)")
+    ax0.set_title("Val (2k) vs Ref (1M)")
     ax0.legend(loc="upper left", fontsize=9)
     ax0.grid(alpha=0.25)
 

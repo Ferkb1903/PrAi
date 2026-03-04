@@ -66,7 +66,7 @@ def main() -> None:
     parser.add_argument("--launch-fraction", type=float, default=0.5)
     parser.add_argument("--spot-radius-mm", type=float, default=60.0)
 
-    parser.add_argument("--low-events", type=int, default=5000)
+    parser.add_argument("--low-events", type=int, default=2000)
     parser.add_argument("--high-events", type=int, default=1000000)
     parser.add_argument("--low-seed", type=int, default=101)
     parser.add_argument("--high-seed", type=int, default=202)
