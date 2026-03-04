@@ -1,0 +1,55 @@
+{
+  "seed": 42,
+  "shape": [96, 96, 96],
+  "spacing_mm": [2.0, 2.0, 2.0],
+  "beam_axis": 0,
+  "lateral_sigma_mm": 18.0,
+  "beam_radius_mm": 42.0,
+  "stages": [
+    {
+      "name": "stage1_easy",
+      "n_cases": 1200,
+      "energy_range_mev": [90.0, 180.0],
+      "noise_rel": 0.03,
+      "num_slabs_min": 2,
+      "num_slabs_max": 3,
+      "materials": [
+        {"name": "water", "spr": 1.0},
+        {"name": "soft", "spr": 1.05},
+        {"name": "bone", "spr": 1.35}
+      ]
+    },
+    {
+      "name": "stage2_medium",
+      "n_cases": 1600,
+      "energy_range_mev": [80.0, 210.0],
+      "noise_rel": 0.06,
+      "num_slabs_min": 3,
+      "num_slabs_max": 5,
+      "materials": [
+        {"name": "lung", "spr": 0.35},
+        {"name": "adipose", "spr": 0.93},
+        {"name": "water", "spr": 1.0},
+        {"name": "soft", "spr": 1.07},
+        {"name": "bone", "spr": 1.45}
+      ]
+    },
+    {
+      "name": "stage3_hard",
+      "n_cases": 2200,
+      "energy_range_mev": [70.0, 225.0],
+      "noise_rel": 0.1,
+      "num_slabs_min": 4,
+      "num_slabs_max": 7,
+      "materials": [
+        {"name": "air", "spr": 0.05},
+        {"name": "lung", "spr": 0.28},
+        {"name": "adipose", "spr": 0.93},
+        {"name": "water", "spr": 1.0},
+        {"name": "soft", "spr": 1.08},
+        {"name": "trabecular_bone", "spr": 1.35},
+        {"name": "cortical_bone", "spr": 1.65}
+      ]
+    }
+  ]
+}

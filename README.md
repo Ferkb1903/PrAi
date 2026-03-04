@@ -90,3 +90,30 @@ La red usa aprendizaje residual: `D_pred = D_low + Net(D_low, SPR, E0, BeamMask)
 
 - Python + `numpy` + `SimpleITK`
 - OpenGATE/Geant4 disponible en nodo de ejecución
+
+## Curriculum Learning (Slabs sintéticos, sin CT)
+
+Primer paso de reestructuración: entrenar la red en un entorno controlado de slabs de materiales, antes de volver a CT real.
+
+1) Generar dataset de curriculum por etapas (`easy -> medium -> hard`):
+
+```bash
+python scripts/generate_slab_curriculum_dataset.py \
+	--config configs/curriculum/slabs_curriculum.json \
+	--out-root data/curriculum/slabs
+```
+
+2) Entrenar por curriculum (continúa cada etapa desde `best.pt` de la etapa anterior):
+
+```bash
+bash scripts/train_curriculum_slabs.sh
+```
+
+Variables útiles para ajustar corrida:
+
+```bash
+DATA_ROOT=/ruta/a/data/curriculum/slabs \
+EPOCHS_STAGE1=20 EPOCHS_STAGE2=25 EPOCHS_STAGE3=30 \
+BATCH_SIZE=2 NUM_WORKERS=4 \
+bash scripts/train_curriculum_slabs.sh
+```
