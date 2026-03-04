@@ -93,7 +93,9 @@ def generate_case(
 
     peak = np.exp(-0.5 * ((wed_mm - range_w_mm) / sigma_peak_mm) ** 2)
     plateau = 0.18 * np.exp(-wed_mm / max(1e-3, 1.3 * range_w_mm))
-    distal_cut = 1.0 / (1.0 + np.exp((wed_mm - (range_w_mm + 3.0)) / 2.2))
+    distal_arg = (wed_mm - (range_w_mm + 3.0)) / 2.2
+    distal_arg = np.clip(distal_arg, -60.0, 60.0)
+    distal_cut = 1.0 / (1.0 + np.exp(distal_arg))
 
     depth_profile = (peak + plateau) * distal_cut
     depth_profile = depth_profile / max(float(depth_profile.max()), 1e-8)
